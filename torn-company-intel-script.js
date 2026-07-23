@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Company Competitor Intelligence
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts/raw/main/torn-company-intel-script.js
-// @version      9.0.5
+// @version      9.0.6
 // @license      MIT
 // @description  Fetches real daily/weekly income and customer metrics from /v2/company/snapshot
 // @author       beatrice27
@@ -19,7 +19,7 @@
 
     const fetchIntel = (forceRefresh = false) => {
         if (!apiKey) {
-            promptApiKey();
+            renderApiKeyPrompt();
             return;
         }
 
@@ -150,6 +150,26 @@
         return '$' + amount.toLocaleString();
     };
 
+    const renderLoadingState = () => {
+        const container = ensureWidgetVisible();
+        container.innerHTML = `
+            <div style="text-align: center; padding: 10px; color: #aaa; font-size: 12px;">
+                Loading company intelligence...
+            </div>
+        `;
+    };
+
+    const renderApiKeyPrompt = () => {
+        const container = ensureWidgetVisible();
+        container.innerHTML = `
+            <div style="padding: 10px 0; color: #ccc; font-size: 12px;">
+                <div style="margin-bottom: 8px;">Enter your Torn API key to load the company intelligence widget.</div>
+                <button id="btn-enter-api-key" style="background: #2ed573; color: #111; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;">Enter API Key</button>
+            </div>
+        `;
+        attachEventListeners();
+    };
+
     const renderTableSection = (title, list) => {
         if (!list || list.length === 0) {
             return `
@@ -201,7 +221,7 @@
     };
 
     const renderUI = (myRating, targetRating, top3Same, bottom3Target, top3Target, totalIndustryCount) => {
-        let container = getWidgetContainer();
+        let container = ensureWidgetVisible();
 
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -221,7 +241,7 @@
     };
 
     const renderError = (msg) => {
-        let container = getWidgetContainer();
+        let container = ensureWidgetVisible();
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <h3 style="margin: 0; color: #ff4757; font-size: 14px;">⚠️ Snapshot Error</h3>
@@ -246,6 +266,11 @@
         if (btnResetKey) {
             btnResetKey.addEventListener('click', promptApiKey);
         }
+
+        const btnEnterApiKey = document.getElementById('btn-enter-api-key');
+        if (btnEnterApiKey) {
+            btnEnterApiKey.addEventListener('click', promptApiKey);
+        }
     };
 
     const getWidgetContainer = () => {
@@ -253,7 +278,7 @@
         if (!container) {
             container = document.createElement('div');
             container.id = 'director-intel-widget';
-            container.style = "background: #191919; color: #fff; padding: 14px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto;";
+            container.style = "background: #191919; color: #fff; padding: 14px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto; position: relative; z-index: 99999;";
 
             const targetCandidates = [
                 '.content-wrapper',
@@ -262,6 +287,7 @@
                 '.company-content',
                 '.content',
                 '#content',
+                '.container',
                 'body'
             ];
             const targetEl = targetCandidates.map(sel => document.querySelector(sel)).find(Boolean) || document.body;
@@ -270,6 +296,17 @@
                 targetEl.prepend(container);
             } else if (document.body) {
                 document.body.prepend(container);
+            }
+        }
+        return container;
+    };
+
+    const ensureWidgetVisible = () => {
+        const container = getWidgetContainer();
+        if (!container.parentNode) {
+            const fallbackTarget = document.body || document.documentElement;
+            if (fallbackTarget) {
+                fallbackTarget.prepend(container);
             }
         }
         return container;
@@ -285,5 +322,6 @@
         }
     };
 
+    renderLoadingState();
     fetchIntel();
 })();
