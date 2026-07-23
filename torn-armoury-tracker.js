@@ -1,283 +1,494 @@
 // ==UserScript==
-// @name         Torn Faction Roster Armory Overlay
+// @name         Torn Faction Armory & Activity Engine (With Active Loans)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.4
-// @description  Appends loaned armory items directly next to member names on the native Faction Roster.
-// @author       beatrice27
+// @version      2.0.0
+// @description  Tracks drug/alcohol usage, chain hits, and live active armory loans grouped by member.
+// @author       beatrice
+// @license      MIT
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
-// @run-at       document-idle
+// @connect      api.torn.com
 // ==/UserScript==
-
 
 (function() {
     'use strict';
 
-    // Inject Styles for Modal
+    const DRUGS_TO_TRACK = ['Xanax', 'Vicodin', 'Speed', 'Opium', 'LSD', 'Ecstasy', 'Ketamine', 'Shrooms', 'PCP', 'Cannabis'];
+    const ALCOHOL_TO_TRACK = ['Beer', 'Wine', 'Vodka', 'Sake', 'Tequila'];
+    const MAX_CHUNKS = 40; 
+
+    // --- Inject Styles ---
     const styles = `
-        #armory-loan-modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.75); z-index: 99999;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .armory-modal-card {
-            background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
-            width: 85%; max-width: 900px; max-height: 85vh;
-            display: flex; flex-direction: column; color: #fff;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.8); font-family: Arial, sans-serif;
-        }
-        .armory-modal-header {
-            padding: 12px 18px; background: #2a2a2a; border-bottom: 1px solid #333;
-            display: flex; justify-content: space-between; align-items: center;
-            border-top-left-radius: 6px; border-top-right-radius: 6px;
-        }
-        .armory-modal-header h2 { margin: 0; font-size: 16px; color: #ffca28; }
-        .armory-modal-close {
-            background: none; border: none; color: #aaa; font-size: 20px;
-            cursor: pointer; font-weight: bold;
-        }
-        .armory-modal-close:hover { color: #fff; }
-        .armory-modal-controls {
-            padding: 10px 18px; background: #242424; border-bottom: 1px solid #333;
-            display: flex; gap: 10px; align-items: center;
-        }
-        .armory-modal-search {
-            flex-grow: 1; padding: 6px 10px; background: #111; border: 1px solid #444;
-            color: #fff; border-radius: 4px; font-size: 12px;
-        }
-        .armory-modal-body {
-            padding: 15px; overflow-y: auto; flex-grow: 1;
-        }
-        .armory-modal-table {
-            width: 100%; border-collapse: collapse; font-size: 13px;
-        }
-        .armory-modal-table th, .armory-modal-table td {
-            border: 1px solid #333; padding: 8px 10px; text-align: left;
-        }
-        .armory-modal-table th { background: #2d2d2d; color: #aaa; font-size: 11px; text-transform: uppercase; }
-        .armory-modal-table tr:nth-child(even) { background: #262626; }
-        .armory-badge {
-            background: #007acc; color: #fff; padding: 2px 6px; border-radius: 10px;
-            font-size: 11px; font-weight: bold; display: inline-block;
-        }
-        .loan-trigger-btn {
-            background: #2ed573; color: #000; font-weight: bold; border: none;
-            padding: 6px 12px; border-radius: 4px; cursor: pointer; margin: 10px 0;
-            font-size: 12px; display: inline-flex; align-items: center; gap: 5px;
-        }
-        .loan-trigger-btn:hover { background: #26af5f; }
+        .armory-tracker-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
+        .armory-tracker-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; }
+        .armory-tracker-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .armory-tracker-table th, .armory-tracker-table td { border: 1px solid #444; padding: 8px; text-align: left; }
+        .armory-tracker-table th { background-color: #333; color: #aaa; text-align: center; font-size: 12px; }
+        .armory-tracker-table td { text-align: center; }
+        .armory-tracker-table td:first-child, .armory-tracker-table td:last-child { text-align: left; }
+        .armory-tracker-table tr:nth-child(even) { background-color: #2a2a2a; }
+        
+        /* Clean Text Overrides */
+        .armory-tracker-table td a, 
+        .armory-tracker-table td strong, 
+        .armory-tracker-table td { color: #ffffff !important; text-decoration: none !important; }
+        .armory-tracker-table td a:hover { text-decoration: underline !important; color: #ffca28 !important; }
+        
+        .tracker-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 5px; }
+        .tracker-btn:hover { background: #45a049; }
+        .tracker-btn.secondary-toggle-btn { background: #444; color: #ccc; }
+        .tracker-btn.secondary-toggle-btn:hover { background: #555; color: #fff; }
+        .tracker-btn.export-csv-btn { background: #007acc; }
+        .tracker-btn.export-csv-btn:hover { background: #0062a3; }
+
+        .tracker-inline-panel { display: none; background: #1a1a1a; border: 1px solid #333; padding: 12px; margin-bottom: 15px; border-radius: 4px; }
+        .tracker-inline-input { padding: 6px; background: #111; border: 1px solid #444; color: #fff; border-radius: 3px; font-size: 12px; margin-right: 10px; }
+        .filter-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 13px; color: #ccc; flex-wrap: wrap; gap: 8px; }
+        .filter-row label { margin-right: 8px; }
     `;
+    const styleSheet = document.createElement("style");
+    styleSheet.innerText = styles;
+    document.head.appendChild(styleSheet);
 
-    const styleElement = document.createElement('style');
-    styleElement.innerText = styles;
-    document.head.appendChild(styleElement);
+    let compiledGlobalStats = {}; 
 
-    let globalLoanData = [];
+    function injectDashboard() {
+        if (document.getElementById('armory-tracker-dashboard')) return;
 
-    // Inject Trigger Button on Faction Page
-    function injectTriggerButton() {
-        if (document.getElementById('open-armory-modal-btn')) return;
-
-        const target = document.querySelector('.content-title') || document.querySelector('.content-wrapper');
+        const target = document.querySelector('.content-wrapper') || document.querySelector('#mainContainer');
         if (!target) return;
 
-        const btn = document.createElement('button');
-        btn.id = 'open-armory-modal-btn';
-        btn.className = 'loan-trigger-btn';
-        btn.innerHTML = '🛡️ View Armory Loans';
-        btn.onclick = openModal;
+        const dashboard = document.createElement('div');
+        dashboard.id = 'armory-tracker-dashboard';
+        dashboard.className = 'armory-tracker-wrap';
 
-        target.parentNode.insertBefore(btn, target);
-    }
+        let savedKey = GM_getValue('torn_api_key', '');
 
-    // Open Modal
-    function openModal() {
-        let apiKey = GM_getValue('torn_api_key', '');
-        if (!apiKey) {
-            apiKey = prompt("Enter your Torn API Key (Faction access required):");
-            if (apiKey) {
-                apiKey = apiKey.trim();
-                GM_setValue('torn_api_key', apiKey);
-            } else {
+        dashboard.innerHTML = `
+            <div class="armory-tracker-title">
+                <span>Faction Armory, Activity & Loan Engine</span>
+                <div>
+                    <button id="fetch-armory-btn" class="tracker-btn">Run Deep Report</button>
+                    <button id="toggle-filters-btn" class="tracker-btn secondary-toggle-btn">🎛️ Filters</button>
+                    <button id="toggle-settings-btn" class="tracker-btn secondary-toggle-btn">⚙️ Settings</button>
+                    <button id="export-csv-btn" class="tracker-btn export-csv-btn" style="display: none;">📥 Export CSV</button>
+                </div>
+            </div>
+            
+            <div id="tracker-filters-panel" class="tracker-inline-panel">
+                <div class="filter-row">
+                    <label><input type="checkbox" id="track-drugs-checkbox" checked> Track Drugs</label>
+                    <label><input type="checkbox" id="track-alcohol-checkbox" checked> Track Alcohol</label>
+                    <label style="color: #ffca28;"><input type="checkbox" id="track-chain-checkbox" checked> Show Last Chain Hit</label>
+                    <label style="color: #70a1ff;"><input type="checkbox" id="track-loans-checkbox" checked> Track Active Loans</label>
+                </div>
+                <div class="filter-row" style="margin-bottom: 0;">
+                    <label>Start Date:</label>
+                    <input type="date" id="filter-start-date" class="tracker-inline-input">
+                    <label>End Date:</label>
+                    <input type="date" id="filter-end-date" class="tracker-inline-input">
+                </div>
+            </div>
+
+            <div id="tracker-settings-panel" class="tracker-inline-panel">
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter your Limited/Full Access API Key:</p>
+                <div style="display:flex; align-items:center;">
+                    <input type="password" id="inline-api-input" class="tracker-inline-input" style="width: 50%;" value="${savedKey}" placeholder="Paste API Key...">
+                    <button id="inline-save-btn" class="tracker-btn">Save</button>
+                </div>
+                <div id="inline-save-status" style="margin-top: 6px; font-size: 12px;"></div>
+            </div>
+
+            <div id="tracker-results-container">
+                ${savedKey ? 
+                  '<p style="color: #aaa; font-size:12px;">Click "Run Deep Report" to gather full historical loops & active loans.</p>' : 
+                  '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click the <b>⚙️ Settings</b> button above to set it up.</p>'}
+            </div>
+        `;
+
+        target.insertBefore(dashboard, target.firstChild);
+
+        const filtersPanel = document.getElementById('tracker-filters-panel');
+        const settingsPanel = document.getElementById('tracker-settings-panel');
+
+        document.getElementById('toggle-filters-btn').addEventListener('click', () => {
+            filtersPanel.style.display = filtersPanel.style.display === 'block' ? 'none' : 'block';
+            settingsPanel.style.display = 'none';
+        });
+
+        document.getElementById('toggle-settings-btn').addEventListener('click', () => {
+            settingsPanel.style.display = settingsPanel.style.display === 'block' ? 'none' : 'block';
+            filtersPanel.style.display = 'none';
+        });
+
+        document.getElementById('inline-save-btn').addEventListener('click', () => {
+            const keyVal = document.getElementById('inline-api-input').value.trim();
+            const status = document.getElementById('inline-save-status');
+            GM_setValue('torn_api_key', keyVal);
+            status.style.color = '#4caf50';
+            status.innerText = '✅ Key successfully saved!';
+            setTimeout(() => { status.innerText = ''; settingsPanel.style.display = 'none'; }, 1500);
+        });
+
+        document.getElementById('fetch-armory-btn').addEventListener('click', () => {
+            const apiKey = GM_getValue('torn_api_key', '');
+            if (!apiKey) {
+                alert('Please configure your API key first inside Settings.');
+                settingsPanel.style.display = 'block';
                 return;
             }
-        }
+            startDeepScan(apiKey);
+        });
 
-        // Create Overlay
-        let overlay = document.getElementById('armory-loan-modal-overlay');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.id = 'armory-loan-modal-overlay';
-            overlay.innerHTML = `
-                <div class="armory-modal-card">
-                    <div class="armory-modal-header">
-                        <h2>🛡️ Active Faction Armory Loans</h2>
-                        <button class="armory-modal-close" id="close-armory-modal">&times;</button>
-                    </div>
-                    <div class="armory-modal-controls">
-                        <input type="text" id="armory-modal-search-input" class="armory-modal-search" placeholder="Search by member name or item...">
-                        <button id="armory-modal-refresh" style="background:#444; color:#fff; border:none; padding:6px 10px; border-radius:3px; cursor:pointer;">🔄 Refresh</button>
-                    </div>
-                    <div class="armory-modal-body" id="armory-modal-content">
-                        <p style="color: #aaa;">Fetching armory inventory...</p>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-
-            document.getElementById('close-armory-modal').onclick = () => overlay.style.display = 'none';
-            document.getElementById('armory-modal-refresh').onclick = () => fetchArmoryLoans(apiKey);
-            document.getElementById('armory-modal-search-input').oninput = (e) => filterTable(e.target.value);
-            
-            // Close on outside click
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.style.display = 'none'; };
-        } else {
-            overlay.style.display = 'flex';
-        }
-
-        fetchArmoryLoans(apiKey);
+        document.getElementById('export-csv-btn').addEventListener('click', exportToCSVFile);
     }
 
-    // Fetch and Process Data
-    function fetchArmoryLoans(apiKey) {
-        const content = document.getElementById('armory-modal-content');
-        content.innerHTML = '<p style="color: #ffca28;">Querying all 6 armory categories & member list...</p>';
+    function startDeepScan(apiKey) {
+        document.getElementById('export-csv-btn').style.display = 'none';
+        const resultsContainer = document.getElementById('tracker-results-container');
+        
+        let allArmoryLogs = {};
+        let allAttackLogs = {};
+        let activeLoansMap = {};
+        let currentChunk = 0;
+        
+        const now = Math.floor(Date.now() / 1000);
+        const startDateVal = document.getElementById('filter-start-date').value;
+        const endDateVal = document.getElementById('filter-end-date').value;
+        const showChainHits = document.getElementById('track-chain-checkbox').checked;
+        const trackLoans = document.getElementById('track-loans-checkbox').checked;
+        
+        let targetEndTime = now - (3 * 24 * 60 * 60); 
+        let scanToTimestamp = now;
 
-        const selections = 'weapons,armor,temporary,medical,drugs,boosters,basic';
-        const url = `https://api.torn.com/faction/?selections=${selections}&key=${apiKey}`;
+        if (startDateVal) targetEndTime = Math.floor(new Date(startDateVal).getTime() / 1000);
+        if (endDateVal) scanToTimestamp = Math.floor(new Date(endDateVal).getTime() / 1000) + (24 * 60 * 60) - 1;
+        if (scanToTimestamp > now) scanToTimestamp = now;
 
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: url,
-            onload: function(res) {
-                try {
-                    const data = JSON.parse(res.responseText);
-                    if (data.error) {
-                        content.innerHTML = `<p style="color: #ff4757;">API Error: ${data.error.error}</p>`;
-                        return;
+        // Step 1: Fetch Live Physical Inventory Loans
+        function fetchActiveLoans(callback) {
+            if (!trackLoans) {
+                callback({});
+                return;
+            }
+            resultsContainer.innerHTML = `<p style="color: #70a1ff;">Scanning active physical armory loans...</p>`;
+            const selections = 'weapons,armor,temporary,medical,drugs,boosters,basic';
+            const url = `https://api.torn.com/faction/?selections=${selections}&key=${apiKey}`;
+
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                onload: function(response) {
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        const members = data.members || {};
+                        const categories = ['weapons', 'armor', 'temporary', 'medical', 'drugs', 'boosters'];
+                        const loansByUser = {};
+
+                        categories.forEach(cat => {
+                            const catObj = data[cat];
+                            if (catObj && typeof catObj === 'object' && !Array.isArray(catObj)) {
+                                Object.values(catObj).forEach(item => {
+                                    if (item && item.loaned_to) {
+                                        const borrowerId = String(item.loaned_to);
+                                        const memberName = members[borrowerId]?.name || `User [${borrowerId}]`;
+
+                                        if (!loansByUser[memberName]) {
+                                            loansByUser[memberName] = {};
+                                        }
+
+                                        const itemName = item.name || 'Unknown Item';
+                                        loansByUser[memberName][itemName] = (loansByUser[memberName][itemName] || 0) + 1;
+                                    }
+                                });
+                            }
+                        });
+
+                        callback(loansByUser);
+                    } catch(e) {
+                        callback({});
                     }
-                    parseDataAndRender(data);
-                } catch(e) {
-                    content.innerHTML = `<p style="color: #ff4757;">Failed to parse response payload.</p>`;
+                },
+                onerror: function() {
+                    callback({});
+                }
+            });
+        }
+
+        // Step 2: Fetch Live Attack Chain Activity
+        function fetchLiveAttacks(callback) {
+            if (!showChainHits) {
+                callback({});
+                return;
+            }
+            resultsContainer.innerHTML = `<p style="color: #ffca28;">Fetching live faction chain hit activity...</p>`;
+            const url = `https://api.torn.com/faction/?selections=attacks&key=${apiKey}`;
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                onload: function(response) {
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        callback(data.attacks || {});
+                    } catch(e) {
+                        callback({});
+                    }
+                },
+                onerror: function() {
+                    callback({});
+                }
+            });
+        }
+
+        // Start Pipeline
+        fetchActiveLoans(function(loansData) {
+            activeLoansMap = loansData;
+            fetchLiveAttacks(function(attackData) {
+                allAttackLogs = attackData;
+                fetchNextArmoryChunk();
+            });
+        });
+
+        // Step 3: Paginate historically through armory news loops
+        function fetchNextArmoryChunk() {
+            currentChunk++;
+            resultsContainer.innerHTML = `<p style="color: #ffca28;">Processing historical chunk ${currentChunk} of ${MAX_CHUNKS}... Syncing timeline boundaries...</p>`;
+
+            const url = `https://api.torn.com/faction/?selections=armorynews&to=${scanToTimestamp}&key=${apiKey}`;
+
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                onload: function(response) {
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        if (data.error) {
+                            resultsContainer.innerHTML = `<p style="color: #f44336;">API Error: ${data.error.error}</p>`;
+                            return;
+                        }
+
+                        const chunkArmory = data.armorynews || {};
+                        const logKeys = Object.keys(chunkArmory);
+
+                        if (logKeys.length === 0) {
+                            processCompiledLogs(allArmoryLogs, allAttackLogs, activeLoansMap, targetEndTime);
+                            return;
+                        }
+
+                        Object.assign(allArmoryLogs, chunkArmory);
+
+                        let oldestTimestamp = scanToTimestamp;
+                        logKeys.forEach(id => {
+                            if (chunkArmory[id].timestamp < oldestTimestamp) {
+                                oldestTimestamp = chunkArmory[id].timestamp;
+                            }
+                        });
+
+                        if (oldestTimestamp <= targetEndTime || oldestTimestamp === scanToTimestamp || currentChunk >= MAX_CHUNKS) {
+                            processCompiledLogs(allArmoryLogs, allAttackLogs, activeLoansMap, targetEndTime);
+                        } else {
+                            scanToTimestamp = oldestTimestamp - 1;
+                            setTimeout(fetchNextArmoryChunk, 250);
+                        }
+                    } catch (e) {
+                        resultsContainer.innerHTML = `<p style="color: #f44336;">Error processing API log payload structural values.</p>`;
+                    }
+                },
+                onerror: function() {
+                    resultsContainer.innerHTML = `<p style="color: #f44336;">Network protocol layer failure.</p>`;
+                }
+            });
+        }
+    }
+
+    function processCompiledLogs(armoryLogs, attackLogs, activeLoansMap, targetEndTime) {
+        const now = Math.floor(Date.now() / 1000);
+        const oneDayAgo = now - (24 * 60 * 60);
+        
+        const trackDrugs = document.getElementById('track-drugs-checkbox').checked;
+        const trackAlcohol = document.getElementById('track-alcohol-checkbox').checked;
+        const showChainHits = document.getElementById('track-chain-checkbox').checked;
+        const trackLoans = document.getElementById('track-loans-checkbox').checked;
+
+        let activeFilterList = [];
+        if (trackDrugs) activeFilterList = activeFilterList.concat(DRUGS_TO_TRACK);
+        if (trackAlcohol) activeFilterList = activeFilterList.concat(ALCOHOL_TO_TRACK);
+
+        const userStats = {};
+
+        const initUser = () => ({
+            drugs24h: 0, alcohol24h: 0,
+            drugsWindow: 0, alcoholWindow: 0,
+            breakdown: {}, lastChainHit: 'N/A', lastChainHitRaw: 0,
+            loanedGear: {}
+        });
+
+        // 1. Process Armory Logs
+        Object.values(armoryLogs).forEach(log => {
+            const newsText = log.news;
+            const timestamp = log.timestamp;
+
+            if (timestamp < targetEndTime) return;
+
+            let foundMatch = activeFilterList.find(item => newsText.toLowerCase().includes(item.toLowerCase()));
+            
+            if (foundMatch && newsText.includes("used one of")) {
+                const nameParts = newsText.split(/\s+used\s+/);
+                if (nameParts.length > 0) {
+                    const username = nameParts[0].trim();
+                    if (!userStats[username]) userStats[username] = initUser();
+
+                    const isDrug = DRUGS_TO_TRACK.includes(foundMatch);
+
+                    if (isDrug) {
+                        userStats[username].drugsWindow++;
+                        if (timestamp >= oneDayAgo) userStats[username].drugs24h++;
+                    } else {
+                        userStats[username].alcoholWindow++;
+                        if (timestamp >= oneDayAgo) userStats[username].alcohol24h++;
+                    }
+
+                    userStats[username].breakdown[foundMatch] = (userStats[username].breakdown[foundMatch] || 0) + 1;
                 }
             }
         });
-    }
 
-    function parseDataAndRender(data) {
-        const members = data.members || {};
-        const categories = ['weapons', 'armor', 'temporary', 'medical', 'drugs', 'boosters'];
-        const userLoansMap = {};
+        // 2. Process Chain Attacks
+        if (showChainHits) {
+            Object.values(attackLogs).forEach(attack => {
+                const isChainHit = (attack.chain && attack.chain > 0) || attack.chain_hit === 1;
+                const isSuccess = ["Hospitalized", "Mugged", "Left", "Arrested"].includes(attack.result);
 
-        categories.forEach(cat => {
-            const catObj = data[cat];
-            if (catObj && typeof catObj === 'object' && !Array.isArray(catObj)) {
-                Object.values(catObj).forEach(item => {
-                    if (item && item.loaned_to) {
-                        const borrowerId = String(item.loaned_to);
-
-                        if (!userLoansMap[borrowerId]) {
-                            const memberInfo = members[borrowerId] || {};
-                            userLoansMap[borrowerId] = {
-                                id: borrowerId,
-                                name: memberInfo.name || `User [${borrowerId}]`,
-                                daysInFaction: memberInfo.days_in_faction ?? 'N/A',
-                                itemCounts: {}
-                            };
+                if (isChainHit && isSuccess && attack.timestamp >= targetEndTime) {
+                    const attackerName = attack.attacker_name;
+                    if (attackerName) {
+                        if (!userStats[attackerName]) userStats[attackerName] = initUser();
+                        
+                        if (attack.timestamp > userStats[attackerName].lastChainHitRaw) {
+                            userStats[attackerName].lastChainHitRaw = attack.timestamp;
+                            const dateObj = new Date(attack.timestamp * 1000);
+                            userStats[attackerName].lastChainHit = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + ' ' + dateObj.toLocaleDateString([], {month: 'short', day: 'numeric'});
                         }
-
-                        const itemName = item.name || 'Unknown Item';
-                        userLoansMap[borrowerId].itemCounts[itemName] = (userLoansMap[borrowerId].itemCounts[itemName] || 0) + 1;
                     }
-                });
-            }
-        });
-
-        // Convert Map to Array
-        globalLoanData = Object.values(userLoansMap).map(u => {
-            let totalCount = 0;
-            const itemStrings = [];
-
-            Object.entries(u.itemCounts).forEach(([name, count]) => {
-                totalCount += count;
-                itemStrings.push(count > 1 ? `${name} (x${count})` : name);
+                }
             });
+        }
 
-            return {
-                id: u.id,
-                name: u.name,
-                daysInFaction: u.daysInFaction,
-                totalCount: totalCount,
-                itemsFormatted: itemStrings.join(', ')
-            };
-        });
+        // 3. Attach Active Loans
+        if (trackLoans) {
+            Object.entries(activeLoansMap).forEach(([userName, gearObj]) => {
+                if (!userStats[userName]) userStats[userName] = initUser();
+                userStats[userName].loanedGear = gearObj;
+            });
+        }
 
-        // Sort by total items borrowed descending
-        globalLoanData.sort((a, b) => b.totalCount - a.totalCount);
-        renderTable(globalLoanData);
+        compiledGlobalStats = userStats; 
+        renderTable(userStats, showChainHits, trackLoans);
     }
 
-    function renderTable(dataList) {
-        const content = document.getElementById('armory-modal-content');
+    function renderTable(userStats, showChainHits, trackLoans) {
+        const resultsContainer = document.getElementById('tracker-results-container');
+        const csvBtn = document.getElementById('export-csv-btn');
 
-        if (dataList.length === 0) {
-            content.innerHTML = '<p style="color: #aaa;">No active loans found across any armory category.</p>';
+        if (Object.keys(userStats).length === 0) {
+            resultsContainer.innerHTML = '<p style="color: #aaa;">No matches discovered across current selection intervals.</p>';
+            csvBtn.style.display = 'none';
             return;
         }
 
-        let html = `
-            <table class="armory-modal-table">
+        csvBtn.style.display = 'inline-block';
+
+        const sortedUsers = Object.keys(userStats).sort((a, b) => 
+            (userStats[b].drugsWindow + userStats[b].alcoholWindow) - (userStats[a].drugsWindow + userStats[a].alcoholWindow)
+        );
+
+        let tableHtml = `
+            <table class="armory-tracker-table">
                 <thead>
                     <tr>
-                        <th style="width: 25%;">Member</th>
-                        <th style="width: 15%;">Days in Faction</th>
-                        <th style="width: 15%;">Total Borrowed</th>
-                        <th style="width: 45%;">Loaned Gear Breakdown</th>
+                        <th rowspan="2" style="text-align: left; vertical-align: middle;">Member</th>
+                        <th colspan="2">Past 24 Hours</th>
+                        <th colspan="2">Selected Window</th>
+                        ${showChainHits ? '<th rowspan="2" style="vertical-align: middle;">Last Chain Hit</th>' : ''}
+                        <th rowspan="2" style="text-align: left; vertical-align: middle;">Breakdown Summary</th>
+                        ${trackLoans ? '<th rowspan="2" style="text-align: left; vertical-align: middle; color: #70a1ff;">Active Loaned Gear</th>' : ''}
+                    </tr>
+                    <tr>
+                        <th>Drugs</th>
+                        <th>Alcohol</th>
+                        <th>Drugs</th>
+                        <th>Alcohol</th>
                     </tr>
                 </thead>
                 <tbody>
         `;
 
-        dataList.forEach(user => {
-            html += `
+        sortedUsers.forEach(user => {
+            const data = userStats[user];
+            const breakdownStr = Object.entries(data.breakdown).map(([item, count]) => `${item} (x${count})`).join(', ') || 'None';
+            const loansStr = Object.entries(data.loanedGear).map(([item, count]) => count > 1 ? `${item} (x${count})` : item).join(', ') || 'None';
+
+            tableHtml += `
                 <tr>
-                    <td>
-                        <a href="https://www.torn.com/profiles.php?XID=${user.id}" target="_blank" style="color: #70a1ff; text-decoration: none; font-weight: bold;">
-                            ${user.name}
-                        </a>
-                    </td>
-                    <td>${user.daysInFaction}d</td>
-                    <td><span class="armory-badge">${user.totalCount}</span></td>
-                    <td style="color: #ccc;">${user.itemsFormatted}</td>
+                    <td><strong>${user}</strong></td>
+                    <td style="color: ${data.drugs24h > 2 ? '#ff9800' : '#fff'} !important;">${data.drugs24h}</td>
+                    <td>${data.alcohol24h}</td>
+                    <td>${data.drugsWindow}</td>
+                    <td>${data.alcoholWindow}</td>
+                    ${showChainHits ? `<td style="color: #ffca28 !important; font-size: 12px;">${data.lastChainHit}</td>` : ''}
+                    <td style="font-size: 12px; color: #ccc !important;">${breakdownStr}</td>
+                    ${trackLoans ? `<td style="font-size: 12px; color: #70a1ff !important;">${loansStr}</td>` : ''}
                 </tr>
             `;
         });
 
-        html += `</tbody></table>`;
-        content.innerHTML = html;
+        tableHtml += `</tbody></table>`;
+        resultsContainer.innerHTML = tableHtml;
     }
 
-    function filterTable(query) {
-        const q = query.toLowerCase().trim();
-        if (!q) {
-            renderTable(globalLoanData);
-            return;
-        }
+    function exportToCSVFile() {
+        if (Object.keys(compiledGlobalStats).length === 0) return;
 
-        const filtered = globalLoanData.filter(u => 
-            u.name.toLowerCase().includes(q) || 
-            u.id.includes(q) || 
-            u.itemsFormatted.toLowerCase().includes(q)
-        );
+        const showChainHits = document.getElementById('track-chain-checkbox').checked;
+        const trackLoans = document.getElementById('track-loans-checkbox').checked;
 
-        renderTable(filtered);
+        let header = "Member,24h Drugs,24h Alcohol,Window Drugs,Window Alcohol," + 
+                     (showChainHits ? "Last Chain Hit," : "") + 
+                     "Usage Breakdown," + 
+                     (trackLoans ? "Active Loaned Gear\n" : "\n");
+
+        let csvContent = "data:text/csv;charset=utf-8," + header;
+
+        Object.keys(compiledGlobalStats).forEach(user => {
+            const data = compiledGlobalStats[user];
+            const breakdownStr = Object.entries(data.breakdown).map(([item, count]) => `${item} (x${count})`).join(' | ') || 'None';
+            const loansStr = Object.entries(data.loanedGear).map(([item, count]) => `${item} (x${count})`).join(' | ') || 'None';
+            
+            let row = `${user},${data.drugs24h},${data.alcohol24h},${data.drugsWindow},${data.alcoholWindow},`;
+            if (showChainHits) row += `"${data.lastChainHit}",`;
+            row += `"${breakdownStr}",`;
+            if (trackLoans) row += `"${loansStr}"`;
+            row += `\n`;
+            
+            csvContent += row;
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Faction_Detailed_Report_${Math.floor(Date.now()/1000)}.csv`);
+        document.body.appendChild(link);
+        
+        link.click();
+        document.body.removeChild(link);
     }
 
-    // Observer to insert trigger button on page load
-    const observer = new MutationObserver(injectTriggerButton);
+    const observer = new MutationObserver(() => {
+        injectDashboard();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
-    injectTriggerButton();
 
+    injectDashboard();
 })();
