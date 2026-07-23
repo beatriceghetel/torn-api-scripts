@@ -17,6 +17,15 @@
 
     let apiKey = GM_getValue('torn_api_key', '');
 
+    const createDebugBanner = () => {
+        const banner = document.createElement('div');
+        banner.id = 'director-intel-debug-banner';
+        banner.textContent = 'Director Intel script started';
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4757;color:white;padding:8px 12px;z-index:2147483647;font-size:12px;text-align:center;';
+        document.body.appendChild(banner);
+        setTimeout(() => banner.remove(), 4000);
+    };
+
     const fetchIntel = (forceRefresh = false) => {
         if (!apiKey) {
             renderApiKeyPrompt();
@@ -287,13 +296,6 @@
             if (fallbackTarget) {
                 fallbackTarget.appendChild(container);
             }
-
-            const observer = new MutationObserver(() => {
-                if (fallbackTarget && !fallbackTarget.contains(container)) {
-                    fallbackTarget.appendChild(container);
-                }
-            });
-            observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
         }
         return container;
     };
@@ -302,9 +304,6 @@
         const container = getWidgetContainer();
         const fallbackTarget = document.body || document.documentElement;
         if (fallbackTarget && !fallbackTarget.contains(container)) {
-            fallbackTarget.appendChild(container);
-        }
-        if (container.parentNode !== fallbackTarget) {
             fallbackTarget.appendChild(container);
         }
         return container;
@@ -320,6 +319,7 @@
         }
     };
 
+    createDebugBanner();
     renderLoadingState();
     fetchIntel();
 })();
