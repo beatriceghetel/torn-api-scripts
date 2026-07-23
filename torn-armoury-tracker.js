@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Roster Armory Overlay
 // @namespace    http://tampermonkey.net/
-// @version      1.1.3
+// @version      1.1.4
 // @description  Appends loaned armory items directly next to member names on the native Faction Roster.
 // @author       beatrice27
 // @match        https://www.torn.com/factions.php*
@@ -15,304 +15,269 @@
 (function() {
     'use strict';
 
-    // --- Inject Styles ---
+    // Inject Styles for Modal
     const styles = `
-        .armory-tracker-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
-        .armory-tracker-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; }
-        .armory-tracker-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .armory-tracker-table th, .armory-tracker-table td { border: 1px solid #444; padding: 8px; text-align: left; }
-        .armory-tracker-table th { background-color: #333; color: #aaa; text-align: center; font-size: 12px; }
-        .armory-tracker-table td { text-align: center; }
-        .armory-tracker-table td:first-child { text-align: left; }
-        .armory-tracker-table tr:nth-child(even) { background-color: #2a2a2a; }
-        
-        /* Clean Text Overrides */
-        .armory-tracker-table td a, 
-        .armory-tracker-table td strong, 
-        .armory-tracker-table td { color: #ffffff !important; text-decoration: none !important; }
-        .armory-tracker-table td a:hover { text-decoration: underline !important; color: #ffca28 !important; }
-        
-        .tracker-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 5px; }
-        .tracker-btn:hover { background: #45a049; }
-        .tracker-btn.secondary-toggle-btn { background: #444; color: #ccc; }
-        .tracker-btn.secondary-toggle-btn:hover { background: #555; color: #fff; }
-        .tracker-btn.export-csv-btn { background: #007acc; }
-        .tracker-btn.export-csv-btn:hover { background: #0062a3; }
-
-        .tracker-inline-panel { display: none; background: #1a1a1a; border: 1px solid #333; padding: 12px; margin-bottom: 15px; border-radius: 4px; }
-        .tracker-inline-input { padding: 6px; background: #111; border: 1px solid #444; color: #fff; border-radius: 3px; font-size: 12px; margin-right: 10px; }
-        .filter-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 13px; color: #ccc; flex-wrap: wrap; gap: 10px; }
-        .filter-row label { margin-right: 8px; }
+        #armory-loan-modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.75); z-index: 99999;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .armory-modal-card {
+            background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
+            width: 85%; max-width: 900px; max-height: 85vh;
+            display: flex; flex-direction: column; color: #fff;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8); font-family: Arial, sans-serif;
+        }
+        .armory-modal-header {
+            padding: 12px 18px; background: #2a2a2a; border-bottom: 1px solid #333;
+            display: flex; justify-content: space-between; align-items: center;
+            border-top-left-radius: 6px; border-top-right-radius: 6px;
+        }
+        .armory-modal-header h2 { margin: 0; font-size: 16px; color: #ffca28; }
+        .armory-modal-close {
+            background: none; border: none; color: #aaa; font-size: 20px;
+            cursor: pointer; font-weight: bold;
+        }
+        .armory-modal-close:hover { color: #fff; }
+        .armory-modal-controls {
+            padding: 10px 18px; background: #242424; border-bottom: 1px solid #333;
+            display: flex; gap: 10px; align-items: center;
+        }
+        .armory-modal-search {
+            flex-grow: 1; padding: 6px 10px; background: #111; border: 1px solid #444;
+            color: #fff; border-radius: 4px; font-size: 12px;
+        }
+        .armory-modal-body {
+            padding: 15px; overflow-y: auto; flex-grow: 1;
+        }
+        .armory-modal-table {
+            width: 100%; border-collapse: collapse; font-size: 13px;
+        }
+        .armory-modal-table th, .armory-modal-table td {
+            border: 1px solid #333; padding: 8px 10px; text-align: left;
+        }
+        .armory-modal-table th { background: #2d2d2d; color: #aaa; font-size: 11px; text-transform: uppercase; }
+        .armory-modal-table tr:nth-child(even) { background: #262626; }
+        .armory-badge {
+            background: #007acc; color: #fff; padding: 2px 6px; border-radius: 10px;
+            font-size: 11px; font-weight: bold; display: inline-block;
+        }
+        .loan-trigger-btn {
+            background: #2ed573; color: #000; font-weight: bold; border: none;
+            padding: 6px 12px; border-radius: 4px; cursor: pointer; margin: 10px 0;
+            font-size: 12px; display: inline-flex; align-items: center; gap: 5px;
+        }
+        .loan-trigger-btn:hover { background: #26af5f; }
     `;
-    const styleSheet = document.createElement("style");
-    styleSheet.innerText = styles;
-    document.head.appendChild(styleSheet);
 
-    let compiledGlobalLoans = {}; 
+    const styleElement = document.createElement('style');
+    styleElement.innerText = styles;
+    document.head.appendChild(styleElement);
 
-    function injectDashboard() {
-        if (document.getElementById('armory-loan-dashboard')) return;
+    let globalLoanData = [];
 
-        const target = document.querySelector('#mainContainer') 
-            || document.querySelector('.content-wrapper') 
-            || document.querySelector('.main-wrapper');
+    // Inject Trigger Button on Faction Page
+    function injectTriggerButton() {
+        if (document.getElementById('open-armory-modal-btn')) return;
+
+        const target = document.querySelector('.content-title') || document.querySelector('.content-wrapper');
         if (!target) return;
 
-        const dashboard = document.createElement('div');
-        dashboard.id = 'armory-loan-dashboard';
-        dashboard.className = 'armory-tracker-wrap';
+        const btn = document.createElement('button');
+        btn.id = 'open-armory-modal-btn';
+        btn.className = 'loan-trigger-btn';
+        btn.innerHTML = '🛡️ View Armory Loans';
+        btn.onclick = openModal;
 
-        let savedKey = GM_getValue('torn_api_key', '');
-
-        dashboard.innerHTML = `
-            <div class="armory-tracker-title">
-                <span>🛡️ Faction Armory Loan Tracker</span>
-                <div>
-                    <button id="fetch-loans-btn" class="tracker-btn">Scan Loans</button>
-                    <button id="toggle-filters-btn" class="tracker-btn secondary-toggle-btn">🎛️ Filters</button>
-                    <button id="toggle-settings-btn" class="tracker-btn secondary-toggle-btn">⚙️ Settings</button>
-                    <button id="export-csv-btn" class="tracker-btn export-csv-btn" style="display: none;">📥 Export CSV</button>
-                </div>
-            </div>
-            
-            <div id="tracker-filters-panel" class="tracker-inline-panel">
-                <div class="filter-row">
-                    <label><input type="checkbox" id="filter-weapons" checked> Weapons</label>
-                    <label><input type="checkbox" id="filter-armor" checked> Armor</label>
-                    <label><input type="checkbox" id="filter-temp" checked> Temp / Meds</label>
-                    <label><input type="checkbox" id="filter-drugs" checked> Drugs / Boosters</label>
-                    <label style="color: #2ed573; margin-left: 10px;"><input type="checkbox" id="filter-newcomers-only"> Highlight Newcomers (<=30 Days)</label>
-                </div>
-            </div>
-
-            <div id="tracker-settings-panel" class="tracker-inline-panel">
-                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter your Limited/Full Access API Key:</p>
-                <div style="display:flex; align-items:center;">
-                    <input type="password" id="inline-api-input" class="tracker-inline-input" style="width: 50%;" value="${savedKey}" placeholder="Paste API Key...">
-                    <button id="inline-save-btn" class="tracker-btn">Save</button>
-                </div>
-                <div id="inline-save-status" style="margin-top: 6px; font-size: 12px;"></div>
-            </div>
-
-            <div id="tracker-results-container">
-                ${savedKey ? 
-                  '<p style="color: #aaa; font-size:12px;">Click "Scan Loans" to pull live active armory loans.</p>' : 
-                  '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ Settings</b> above to set it up.</p>'}
-            </div>
-        `;
-
-        if (target.firstChild) {
-            target.insertBefore(dashboard, target.firstChild);
-        } else {
-            target.appendChild(dashboard);
-        }
-
-        const filtersPanel = document.getElementById('tracker-filters-panel');
-        const settingsPanel = document.getElementById('tracker-settings-panel');
-
-        document.getElementById('toggle-filters-btn').addEventListener('click', () => {
-            filtersPanel.style.display = filtersPanel.style.display === 'block' ? 'none' : 'block';
-            settingsPanel.style.display = 'none';
-        });
-
-        document.getElementById('toggle-settings-btn').addEventListener('click', () => {
-            settingsPanel.style.display = settingsPanel.style.display === 'block' ? 'none' : 'block';
-            filtersPanel.style.display = 'none';
-        });
-
-        document.getElementById('inline-save-btn').addEventListener('click', () => {
-            const keyVal = document.getElementById('inline-api-input').value.trim();
-            const status = document.getElementById('inline-save-status');
-            GM_setValue('torn_api_key', keyVal);
-            status.style.color = '#4caf50';
-            status.innerText = '✅ Key successfully saved!';
-            setTimeout(() => { status.innerText = ''; settingsPanel.style.display = 'none'; }, 1500);
-        });
-
-        document.getElementById('fetch-loans-btn').addEventListener('click', () => {
-            const apiKey = GM_getValue('torn_api_key', '');
-            if (!apiKey) {
-                alert('Please configure your API key first inside Settings.');
-                settingsPanel.style.display = 'block';
-                return;
-            }
-            startArmoryScan(apiKey);
-        });
-
-        document.getElementById('export-csv-btn').addEventListener('click', exportToCSVFile);
+        target.parentNode.insertBefore(btn, target);
     }
 
-    function startArmoryScan(apiKey) {
-        document.getElementById('export-csv-btn').style.display = 'none';
-        const resultsContainer = document.getElementById('tracker-results-container');
-        resultsContainer.innerHTML = `<p style="color: #ffca28; font-size: 12px;">Fetching all armory categories and member roster...</p>`;
+    // Open Modal
+    function openModal() {
+        let apiKey = GM_getValue('torn_api_key', '');
+        if (!apiKey) {
+            apiKey = prompt("Enter your Torn API Key (Faction access required):");
+            if (apiKey) {
+                apiKey = apiKey.trim();
+                GM_setValue('torn_api_key', apiKey);
+            } else {
+                return;
+            }
+        }
 
-        const selections = 'weapons,armor,temporary,medical,drugs,boosters,cesium,main,basic';
+        // Create Overlay
+        let overlay = document.getElementById('armory-loan-modal-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'armory-loan-modal-overlay';
+            overlay.innerHTML = `
+                <div class="armory-modal-card">
+                    <div class="armory-modal-header">
+                        <h2>🛡️ Active Faction Armory Loans</h2>
+                        <button class="armory-modal-close" id="close-armory-modal">&times;</button>
+                    </div>
+                    <div class="armory-modal-controls">
+                        <input type="text" id="armory-modal-search-input" class="armory-modal-search" placeholder="Search by member name or item...">
+                        <button id="armory-modal-refresh" style="background:#444; color:#fff; border:none; padding:6px 10px; border-radius:3px; cursor:pointer;">🔄 Refresh</button>
+                    </div>
+                    <div class="armory-modal-body" id="armory-modal-content">
+                        <p style="color: #aaa;">Fetching armory inventory...</p>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            document.getElementById('close-armory-modal').onclick = () => overlay.style.display = 'none';
+            document.getElementById('armory-modal-refresh').onclick = () => fetchArmoryLoans(apiKey);
+            document.getElementById('armory-modal-search-input').oninput = (e) => filterTable(e.target.value);
+            
+            // Close on outside click
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.style.display = 'none'; };
+        } else {
+            overlay.style.display = 'flex';
+        }
+
+        fetchArmoryLoans(apiKey);
+    }
+
+    // Fetch and Process Data
+    function fetchArmoryLoans(apiKey) {
+        const content = document.getElementById('armory-modal-content');
+        content.innerHTML = '<p style="color: #ffca28;">Querying all 6 armory categories & member list...</p>';
+
+        const selections = 'weapons,armor,temporary,medical,drugs,boosters,basic';
         const url = `https://api.torn.com/faction/?selections=${selections}&key=${apiKey}`;
 
         GM_xmlhttpRequest({
             method: "GET",
             url: url,
-            onload: function(response) {
+            onload: function(res) {
                 try {
-                    const data = JSON.parse(response.responseText);
+                    const data = JSON.parse(res.responseText);
                     if (data.error) {
-                        resultsContainer.innerHTML = `<p style="color: #f44336; font-size:12px;">API Error: ${data.error.error}</p>`;
+                        content.innerHTML = `<p style="color: #ff4757;">API Error: ${data.error.error}</p>`;
                         return;
                     }
-                    processArmoryData(data);
-                } catch (e) {
-                    resultsContainer.innerHTML = `<p style="color: #f44336; font-size:12px;">Error parsing armory response.</p>`;
+                    parseDataAndRender(data);
+                } catch(e) {
+                    content.innerHTML = `<p style="color: #ff4757;">Failed to parse response payload.</p>`;
                 }
-            },
-            onerror: function() {
-                resultsContainer.innerHTML = `<p style="color: #f44336; font-size:12px;">Network error while contacting Torn API.</p>`;
             }
         });
     }
 
-    function processArmoryData(data) {
+    function parseDataAndRender(data) {
         const members = data.members || {};
-        const memberLoansMap = {};
+        const categories = ['weapons', 'armor', 'temporary', 'medical', 'drugs', 'boosters'];
+        const userLoansMap = {};
 
-        const trackWeapons = document.getElementById('filter-weapons').checked;
-        const trackArmor = document.getElementById('filter-armor').checked;
-        const trackTemp = document.getElementById('filter-temp').checked;
-        const trackDrugs = document.getElementById('filter-drugs').checked;
+        categories.forEach(cat => {
+            const catObj = data[cat];
+            if (catObj && typeof catObj === 'object' && !Array.isArray(catObj)) {
+                Object.values(catObj).forEach(item => {
+                    if (item && item.loaned_to) {
+                        const borrowerId = String(item.loaned_to);
 
-        const scanCategory = (categoryObj, typeCategory) => {
-            if (!categoryObj || typeof categoryObj !== 'object' || Array.isArray(categoryObj)) return;
+                        if (!userLoansMap[borrowerId]) {
+                            const memberInfo = members[borrowerId] || {};
+                            userLoansMap[borrowerId] = {
+                                id: borrowerId,
+                                name: memberInfo.name || `User [${borrowerId}]`,
+                                daysInFaction: memberInfo.days_in_faction ?? 'N/A',
+                                itemCounts: {}
+                            };
+                        }
 
-            Object.values(categoryObj).forEach(item => {
-                if (item && item.loaned_to) {
-                    const borrowerId = String(item.loaned_to);
-
-                    if (!memberLoansMap[borrowerId]) {
-                        const mInfo = members[borrowerId] || {};
-                        memberLoansMap[borrowerId] = {
-                            id: borrowerId,
-                            name: mInfo.name || `User [${borrowerId}]`,
-                            daysInFaction: mInfo.days_in_faction !== undefined ? mInfo.days_in_faction : 999,
-                            items: []
-                        };
+                        const itemName = item.name || 'Unknown Item';
+                        userLoansMap[borrowerId].itemCounts[itemName] = (userLoansMap[borrowerId].itemCounts[itemName] || 0) + 1;
                     }
+                });
+            }
+        });
 
-                    memberLoansMap[borrowerId].items.push({
-                        name: item.name || 'Unknown Item',
-                        type: typeCategory
-                    });
-                }
+        // Convert Map to Array
+        globalLoanData = Object.values(userLoansMap).map(u => {
+            let totalCount = 0;
+            const itemStrings = [];
+
+            Object.entries(u.itemCounts).forEach(([name, count]) => {
+                totalCount += count;
+                itemStrings.push(count > 1 ? `${name} (x${count})` : name);
             });
-        };
 
-        if (trackWeapons) scanCategory(data.weapons, 'weapon');
-        if (trackArmor) scanCategory(data.armor, 'armor');
-        if (trackTemp) {
-            scanCategory(data.temporary, 'temp');
-            scanCategory(data.medical, 'medical');
-        }
-        if (trackDrugs) {
-            scanCategory(data.drugs, 'drug');
-            scanCategory(data.boosters, 'booster');
-            scanCategory(data.cesium, 'cesium');
-        }
+            return {
+                id: u.id,
+                name: u.name,
+                daysInFaction: u.daysInFaction,
+                totalCount: totalCount,
+                itemsFormatted: itemStrings.join(', ')
+            };
+        });
 
-        compiledGlobalLoans = memberLoansMap;
-        renderTable(memberLoansMap);
+        // Sort by total items borrowed descending
+        globalLoanData.sort((a, b) => b.totalCount - a.totalCount);
+        renderTable(globalLoanData);
     }
 
-    function renderTable(memberLoansMap) {
-        const resultsContainer = document.getElementById('tracker-results-container');
-        const csvBtn = document.getElementById('export-csv-btn');
-        const newcomersOnly = document.getElementById('filter-newcomers-only').checked;
+    function renderTable(dataList) {
+        const content = document.getElementById('armory-modal-content');
 
-        let membersList = Object.values(memberLoansMap);
-
-        if (newcomersOnly) {
-            membersList = membersList.filter(m => m.daysInFaction <= 30);
-        }
-
-        if (membersList.length === 0) {
-            resultsContainer.innerHTML = '<p style="color: #aaa; font-size:12px;">No loaned items match current active filters.</p>';
-            csvBtn.style.display = 'none';
+        if (dataList.length === 0) {
+            content.innerHTML = '<p style="color: #aaa;">No active loans found across any armory category.</p>';
             return;
         }
 
-        csvBtn.style.display = 'inline-block';
-
-        // Sort: Newcomers first, then by total loaned items (descending)
-        membersList.sort((a, b) => {
-            if (a.daysInFaction <= 30 && b.daysInFaction > 30) return -1;
-            if (a.daysInFaction > 30 && b.daysInFaction <= 30) return 1;
-            return b.items.length - a.items.length;
-        });
-
-        let totalItemsOut = 0;
-        let tableHtml = `
-            <table class="armory-tracker-table">
+        let html = `
+            <table class="armory-modal-table">
                 <thead>
                     <tr>
                         <th style="width: 25%;">Member</th>
-                        <th style="width: 12%;">Days in Faction</th>
-                        <th style="width: 12%;">Total Loaned</th>
-                        <th style="width: 51%; text-align: left;">Comma-Separated Item List</th>
+                        <th style="width: 15%;">Days in Faction</th>
+                        <th style="width: 15%;">Total Borrowed</th>
+                        <th style="width: 45%;">Loaned Gear Breakdown</th>
                     </tr>
                 </thead>
                 <tbody>
         `;
 
-        membersList.forEach(m => {
-            totalItemsOut += m.items.length;
-            const isNewcomer = m.daysInFaction <= 30;
-            const daysText = m.daysInFaction === 999 ? 'Left Faction' : `${m.daysInFaction}d`;
-            const nameColor = isNewcomer ? '#2ed573' : '#70a1ff';
-            const itemsCSV = m.items.map(i => i.name).join(', ');
-
-            tableHtml += `
+        dataList.forEach(user => {
+            html += `
                 <tr>
                     <td>
-                        <a href="https://www.torn.com/profiles.php?XID=${m.id}" target="_blank" style="color: ${nameColor} !important; font-weight: bold;">
-                            ${m.name} [${m.id}]
+                        <a href="https://www.torn.com/profiles.php?XID=${user.id}" target="_blank" style="color: #70a1ff; text-decoration: none; font-weight: bold;">
+                            ${user.name}
                         </a>
-                        ${isNewcomer ? ' <span style="color: #2ed573; font-size: 10px;">(New)</span>' : ''}
                     </td>
-                    <td>${daysText}</td>
-                    <td style="color: #ffca28 !important; font-weight: bold;">${m.items.length}</td>
-                    <td style="font-size: 12px; color: #ccc !important; text-align: left;">${itemsCSV}</td>
+                    <td>${user.daysInFaction}d</td>
+                    <td><span class="armory-badge">${user.totalCount}</span></td>
+                    <td style="color: #ccc;">${user.itemsFormatted}</td>
                 </tr>
             `;
         });
 
-        tableHtml += `</tbody></table>`;
-        resultsContainer.innerHTML = tableHtml;
+        html += `</tbody></table>`;
+        content.innerHTML = html;
     }
 
-    function exportToCSVFile() {
-        if (Object.keys(compiledGlobalLoans).length === 0) return;
+    function filterTable(query) {
+        const q = query.toLowerCase().trim();
+        if (!q) {
+            renderTable(globalLoanData);
+            return;
+        }
 
-        let header = "Member ID,Member Name,Days In Faction,Total Items,Loaned Items CSV\n";
-        let csvContent = "data:text/csv;charset=utf-8," + header;
+        const filtered = globalLoanData.filter(u => 
+            u.name.toLowerCase().includes(q) || 
+            u.id.includes(q) || 
+            u.itemsFormatted.toLowerCase().includes(q)
+        );
 
-        Object.values(compiledGlobalLoans).forEach(m => {
-            const itemsCSV = m.items.map(i => i.name).join(' | ');
-            const row = `${m.id},"${m.name}",${m.daysInFaction},${m.items.length},"${itemsCSV}"\n`;
-            csvContent += row;
-        });
-
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `Faction_Armory_Loans_${Math.floor(Date.now()/1000)}.csv`);
-        document.body.appendChild(link);
-        
-        link.click();
-        document.body.removeChild(link);
+        renderTable(filtered);
     }
 
-    const observer = new MutationObserver(() => {
-        injectDashboard();
-    });
+    // Observer to insert trigger button on page load
+    const observer = new MutationObserver(injectTriggerButton);
     observer.observe(document.body, { childList: true, subtree: true });
+    injectTriggerButton();
 
-    injectDashboard();
 })();
