@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Armory & Activity Engine
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.1.1
 // @description  Tracks drug/alcohol usage, chain hits, OR active armory loans grouped by member.
 // @author       beatrice
 // @license      MIT
@@ -21,10 +21,20 @@
 
     // --- Inject Styles ---
     const styles = `
-        .armory-tracker-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
+        .armory-tracker-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; box-sizing: border-box; width: 100%; }
         .armory-tracker-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; }
-        .armory-tracker-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .armory-tracker-table th, .armory-tracker-table td { border: 1px solid #444; padding: 8px; text-align: left; }
+        
+        /* Table Layout & Constraints */
+        .armory-tracker-table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
+        .armory-tracker-table th, .armory-tracker-table td { 
+            border: 1px solid #444; 
+            padding: 8px; 
+            text-align: left; 
+            word-wrap: break-word; 
+            overflow-wrap: break-word; 
+            white-space: normal; 
+            box-sizing: border-box;
+        }
         .armory-tracker-table th { background-color: #333; color: #aaa; text-align: center; font-size: 12px; }
         .armory-tracker-table td { text-align: center; }
         .armory-tracker-table td:first-child { text-align: left; }
@@ -182,7 +192,6 @@
 
     function startScan(apiKey) {
         document.getElementById('export-csv-btn').style.display = 'none';
-        const resultsContainer = document.getElementById('tracker-results-container');
         const trackLoans = document.getElementById('track-loans-checkbox').checked;
 
         if (trackLoans) {
@@ -195,9 +204,9 @@
     // --- Active Loan Dedicated Scan ---
     function fetchActiveLoansOnly(apiKey) {
         const resultsContainer = document.getElementById('tracker-results-container');
-        resultsContainer.innerHTML = `<p style="color: #70a1ff;">Querying faction armory active loans...</p>`;
+        resultsContainer.innerHTML = `<p style="color: #70a1ff;">Querying faction armory active loans and member roster...</p>`;
 
-        const url = `https://api.torn.com/faction/?selections=weapons,armor,temporary,medical,drugs,boosters&key=${apiKey}`;
+        const url = `https://api.torn.com/faction/?selections=basic,weapons,armor,temporary,medical,drugs,boosters&key=${apiKey}`;
 
         GM_xmlhttpRequest({
             method: "GET",
@@ -210,24 +219,47 @@
                         return;
                     }
 
+                    const membersRoster = data.members || {};
                     const categories = ['weapons', 'armor', 'temporary', 'medical', 'drugs', 'boosters'];
                     const loansByUser = {};
 
-                    // Iterate over all items in all categories
+                    // Iterate over all categories
                     categories.forEach(cat => {
                         const catData = data[cat];
                         if (catData) {
                             const itemsList = Array.isArray(catData) ? catData : Object.values(catData);
+                            
                             itemsList.forEach(item => {
-                                if (item && item.loaned_to) {
-                                    const borrowerId = String(item.loaned_to);
+                                // Ensure item exists and has a active loan borrower
+                                if (item && item.loaned_to !== undefined && item.loaned_to !== null && item.loaned_to !== "" && item.loaned_to !== 0) {
                                     
-                                    if (!loansByUser[borrowerId]) {
-                                        loansByUser[borrowerId] = {};
-                                    }
+                                    // Helper to parse individual borrower string/int
+                                    const processBorrower = (borrowerIdRaw) => {
+                                        const borrowerId = String(borrowerIdRaw).trim();
+                                        if (!borrowerId) return;
 
-                                    const itemName = item.name || 'Unknown Item';
-                                    loansByUser[borrowerId][itemName] = (loansByUser[borrowerId][itemName] || 0) + 1;
+                                        const memberObj = membersRoster[borrowerId];
+                                        const memberName = memberObj ? memberObj.name : `User [${borrowerId}]`;
+                                        const userKey = `${memberName} [${borrowerId}]`;
+
+                                        if (!loansByUser[userKey]) {
+                                            loansByUser[userKey] = {
+                                                id: borrowerId,
+                                                name: memberName,
+                                                items: {}
+                                            };
+                                        }
+
+                                        const itemName = item.name || 'Unknown Item';
+                                        loansByUser[userKey].items[itemName] = (loansByUser[userKey].items[itemName] || 0) + 1;
+                                    };
+
+                                    // Handle array or single string/number formats
+                                    if (Array.isArray(item.loaned_to)) {
+                                        item.loaned_to.forEach(processBorrower);
+                                    } else {
+                                        processBorrower(item.loaned_to);
+                                    }
                                 }
                             });
                         }
@@ -250,8 +282,8 @@
         const resultsContainer = document.getElementById('tracker-results-container');
         const csvBtn = document.getElementById('export-csv-btn');
 
-        const userIds = Object.keys(loansByUser);
-        if (userIds.length === 0) {
+        const userKeys = Object.keys(loansByUser);
+        if (userKeys.length === 0) {
             resultsContainer.innerHTML = '<p style="color: #aaa;">No active loaned items currently found in faction armory.</p>';
             csvBtn.style.display = 'none';
             return;
@@ -263,22 +295,26 @@
             <table class="armory-tracker-table">
                 <thead>
                     <tr>
-                        <th style="width: 25%; text-align: left;">Borrower ID</th>
-                        <th style="width: 75%; text-align: left;">Active Loaned Items</th>
+                        <th style="width: 30%; text-align: left;">Borrower Name</th>
+                        <th style="width: 70%; text-align: left;">Active Loaned Items Breakdown</th>
                     </tr>
                 </thead>
                 <tbody>
         `;
 
-        userIds.forEach(uid => {
-            const gearMap = loansByUser[uid];
-            const itemsStr = Object.entries(gearMap)
+        userKeys.forEach(key => {
+            const userObj = loansByUser[key];
+            const itemsStr = Object.entries(userObj.items)
                 .map(([name, count]) => count > 1 ? `<strong>${name}</strong> (x${count})` : `<strong>${name}</strong>`)
                 .join(', ');
 
             tableHtml += `
                 <tr>
-                    <td><a href="https://www.torn.com/profiles.php?XID=${uid}" target="_blank">User [${uid}]</a></td>
+                    <td style="text-align: left;">
+                        <a href="https://www.torn.com/profiles.php?XID=${userObj.id}" target="_blank">
+                            <strong>${userObj.name}</strong> [${userObj.id}]
+                        </a>
+                    </td>
                     <td style="text-align: left; color: #70a1ff !important; font-size: 13px;">${itemsStr}</td>
                 </tr>
             `;
@@ -475,11 +511,11 @@
             <table class="armory-tracker-table">
                 <thead>
                     <tr>
-                        <th rowspan="2" style="text-align: left; vertical-align: middle;">Member</th>
-                        <th colspan="2">Past 24 Hours</th>
-                        <th colspan="2">Selected Window</th>
-                        ${showChainHits ? '<th rowspan="2" style="vertical-align: middle;">Last Chain Hit</th>' : ''}
-                        <th rowspan="2" style="text-align: left; vertical-align: middle;">Breakdown Summary</th>
+                        <th rowspan="2" style="width: 20%; text-align: left; vertical-align: middle;">Member</th>
+                        <th colspan="2" style="width: 20%;">Past 24 Hours</th>
+                        <th colspan="2" style="width: 20%;">Selected Window</th>
+                        ${showChainHits ? '<th rowspan="2" style="width: 15%; vertical-align: middle;">Last Chain Hit</th>' : ''}
+                        <th rowspan="2" style="width: 25%; text-align: left; vertical-align: middle;">Breakdown Summary</th>
                     </tr>
                     <tr>
                         <th>Drugs</th>
@@ -497,13 +533,13 @@
 
             tableHtml += `
                 <tr>
-                    <td><strong>${user}</strong></td>
+                    <td style="text-align: left;"><strong>${user}</strong></td>
                     <td style="color: ${data.drugs24h > 2 ? '#ff9800' : '#fff'} !important;">${data.drugs24h}</td>
                     <td>${data.alcohol24h}</td>
                     <td>${data.drugsWindow}</td>
                     <td>${data.alcoholWindow}</td>
                     ${showChainHits ? `<td style="color: #ffca28 !important; font-size: 12px;">${data.lastChainHit}</td>` : ''}
-                    <td style="font-size: 12px; color: #ccc !important;">${breakdownStr}</td>
+                    <td style="text-align: left; font-size: 12px; color: #ccc !important;">${breakdownStr}</td>
                 </tr>
             `;
         });
@@ -519,12 +555,13 @@
         let csvContent = "data:text/csv;charset=utf-8,";
 
         if (isLoansMode) {
-            csvContent += "Borrower ID,Active Loaned Gear\n";
-            Object.keys(compiledGlobalStats).forEach(uid => {
-                const itemsStr = Object.entries(compiledGlobalStats[uid])
+            csvContent += "Borrower Name,Borrower ID,Active Loaned Gear\n";
+            Object.keys(compiledGlobalStats).forEach(key => {
+                const userObj = compiledGlobalStats[key];
+                const itemsStr = Object.entries(userObj.items)
                     .map(([name, count]) => count > 1 ? `${name} (x${count})` : name)
                     .join(' | ');
-                csvContent += `"${uid}","${itemsStr}"\n`;
+                csvContent += `"${userObj.name}","${userObj.id}","${itemsStr}"\n`;
             });
         } else {
             const showChainHits = document.getElementById('track-chain-checkbox').checked;
