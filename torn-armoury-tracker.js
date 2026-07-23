@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Armory & Activity Engine
 // @namespace    http://tampermonkey.net/
-// @version      2.1.1
+// @version      2.1.2
 // @description  Tracks drug/alcohol usage, chain hits, OR active armory loans grouped by member.
 // @author       beatrice
 // @license      MIT
@@ -190,6 +190,29 @@
         });
     }
 
+    function extractUserIds(loanData) {
+        if (loanData === null || loanData === undefined || loanData === 0 || loanData === "") return [];
+        
+        let ids = [];
+        if (typeof loanData === 'number') {
+            ids.push(String(loanData));
+        } else if (typeof loanData === 'string') {
+            loanData.split(',').forEach(id => {
+                const clean = id.trim();
+                if (clean && !isNaN(clean)) ids.push(clean);
+            });
+        } else if (Array.isArray(loanData)) {
+            loanData.forEach(sub => {
+                ids = ids.concat(extractUserIds(sub));
+            });
+        } else if (typeof loanData === 'object') {
+            Object.values(loanData).forEach(sub => {
+                ids = ids.concat(extractUserIds(sub));
+            });
+        }
+        return ids;
+    }
+
     function startScan(apiKey) {
         document.getElementById('export-csv-btn').style.display = 'none';
         const trackLoans = document.getElementById('track-loans-checkbox').checked;
@@ -223,21 +246,16 @@
                     const categories = ['weapons', 'armor', 'temporary', 'medical', 'drugs', 'boosters'];
                     const loansByUser = {};
 
-                    // Iterate over all categories
                     categories.forEach(cat => {
                         const catData = data[cat];
                         if (catData) {
                             const itemsList = Array.isArray(catData) ? catData : Object.values(catData);
                             
                             itemsList.forEach(item => {
-                                // Ensure item exists and has a active loan borrower
-                                if (item && item.loaned_to !== undefined && item.loaned_to !== null && item.loaned_to !== "" && item.loaned_to !== 0) {
+                                if (item && item.loaned_to !== undefined && item.loaned_to !== null) {
+                                    const borrowerIds = extractUserIds(item.loaned_to);
                                     
-                                    // Helper to parse individual borrower string/int
-                                    const processBorrower = (borrowerIdRaw) => {
-                                        const borrowerId = String(borrowerIdRaw).trim();
-                                        if (!borrowerId) return;
-
+                                    borrowerIds.forEach(borrowerId => {
                                         const memberObj = membersRoster[borrowerId];
                                         const memberName = memberObj ? memberObj.name : `User [${borrowerId}]`;
                                         const userKey = `${memberName} [${borrowerId}]`;
@@ -252,14 +270,7 @@
 
                                         const itemName = item.name || 'Unknown Item';
                                         loansByUser[userKey].items[itemName] = (loansByUser[userKey].items[itemName] || 0) + 1;
-                                    };
-
-                                    // Handle array or single string/number formats
-                                    if (Array.isArray(item.loaned_to)) {
-                                        item.loaned_to.forEach(processBorrower);
-                                    } else {
-                                        processBorrower(item.loaned_to);
-                                    }
+                                    });
                                 }
                             });
                         }
