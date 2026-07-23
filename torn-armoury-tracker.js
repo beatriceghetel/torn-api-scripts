@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn Faction Armory Tracker (Live Items)
+// @name         Torn Faction Armory Tracker (Grouped by Member)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
-// @description  Tracks faction items loaned to members reading directly from armory inventory.
+// @version      1.1.1
+// @description  Aggregates all loaned armory items per member into comma-separated lists.
 // @author       beatrice27
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_setValue
@@ -27,10 +27,10 @@
     };
 
     const fetchArmoryData = () => {
-        // Fetch specific categories + basic (for the member list)
+        // Fetch ALL armory categories + basic roster
         GM_xmlhttpRequest({
             method: "GET",
-            url: `https://api.torn.com/faction/?selections=weapons,armor,temporary,basic&key=${apiKey}`,
+            url: `https://api.torn.com/faction/?selections=weapons,armor,temporary,medical,basic&key=${apiKey}`,
             onload: (res) => {
                 let data;
                 try {
@@ -45,58 +45,67 @@
                     return;
                 }
 
-                processLoans(data);
+                processLoansByMember(data);
             }
         });
     };
 
-    const processLoans = (data) => {
+    const processLoansByMember = (data) => {
         const members = data.members || {};
-        const activeLoans = [];
+        const memberLoansMap = {};
 
-        // Helper to parse items and grab loaned ones
-        const extractLoans = (itemsObj, categoryName) => {
-            if (!itemsObj) return;
-            
-            // The API returns items where the key is the unique Item ID
-            for (const [uniqueId, item] of Object.entries(itemsObj)) {
-                if (item.loaned_to) {
-                    activeLoans.push({
-                        uniqueId: uniqueId,
-                        name: item.name,
-                        type: item.type || categoryName,
-                        loanedToId: item.loaned_to,
-                        memberName: members[item.loaned_to] ? members[item.loaned_to].name : 'Unknown',
-                        daysInFaction: members[item.loaned_to] ? members[item.loaned_to].days_in_faction : 999
-                    });
+        // Helper function to iterate through any category object/array
+        const scanCategory = (categoryObj) => {
+            if (!categoryObj || typeof categoryObj !== 'object') return;
+
+            Object.values(categoryObj).forEach(item => {
+                if (!item || !item.loaned_to) return;
+
+                const borrowerId = String(item.loaned_to);
+
+                if (!memberLoansMap[borrowerId]) {
+                    const memberInfo = members[borrowerId] || {};
+                    memberLoansMap[borrowerId] = {
+                        id: borrowerId,
+                        name: memberInfo.name || `User #${borrowerId}`,
+                        daysInFaction: memberInfo.days_in_faction !== undefined ? memberInfo.days_in_faction : 999,
+                        items: []
+                    };
                 }
-            }
+
+                memberLoansMap[borrowerId].items.push(item.name || 'Unknown Item');
+            });
         };
 
-        extractLoans(data.weapons, "Weapon");
-        extractLoans(data.armor, "Armor");
-        extractLoans(data.temporary, "Temporary");
+        // Scan all 4 armory categories
+        scanCategory(data.weapons);
+        scanCategory(data.armor);
+        scanCategory(data.temporary);
+        scanCategory(data.medical);
 
-        // Sort loans: Newcomers (<= 30 days) at the top, then alphabetically by member name
-        activeLoans.sort((a, b) => {
+        // Convert map to array
+        const memberLoanList = Object.values(memberLoansMap);
+
+        // Sort: Newcomers (<=30 days) first, then by total item count (descending)
+        memberLoanList.sort((a, b) => {
             if (a.daysInFaction <= 30 && b.daysInFaction > 30) return -1;
             if (a.daysInFaction > 30 && b.daysInFaction <= 30) return 1;
-            return a.memberName.localeCompare(b.memberName);
+            return b.items.length - a.items.length;
         });
 
-        renderUI(activeLoans, members);
+        renderUI(memberLoanList, Object.keys(members).length);
     };
 
     const renderLoadingState = () => {
         const container = ensureWidgetVisible();
-        container.innerHTML = `<div style="text-align: center; padding: 10px; color: #aaa; font-size: 12px;">Scanning armory inventory...</div>`;
+        container.innerHTML = `<div style="text-align: center; padding: 10px; color: #aaa; font-size: 12px;">Scanning full armory inventory...</div>`;
     };
 
     const renderApiKeyPrompt = () => {
         const container = ensureWidgetVisible();
         container.innerHTML = `
             <div style="padding: 10px 0; text-align: center; color: #ccc; font-size: 12px;">
-                <div style="margin-bottom: 8px;">Enter a Torn API key (Limited/Full access with Faction permissions) to load the tracker.</div>
+                <div style="margin-bottom: 8px;">Enter a Torn API key (Faction permissions required) to view active loans.</div>
                 <button id="btn-enter-api-key" style="background: #2ed573; color: #111; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;">Enter API Key</button>
             </div>
         `;
@@ -108,46 +117,53 @@
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <h3 style="margin: 0; color: #ff4757; font-size: 14px;">⚠️ Tracking Error</h3>
-                <button id="btn-reset-key" style="background: #ff4757; color: #fff; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">🔑 Reset API Key</button>
+                <button id="btn-reset-key" style="background: #ff4757; color: #fff; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">🔑 Reset Key</button>
             </div>
             <div style="color: #ccc; font-size: 12px;">${msg}</div>
         `;
         attachEventListeners();
     };
 
-    const renderUI = (loans, members) => {
+    const renderUI = (memberLoans, totalFactionMembers) => {
         let container = ensureWidgetVisible();
 
-        let tableRows = loans.map(loan => {
-            const isNewcomer = loan.daysInFaction <= 30;
-            const rowBg = isNewcomer ? 'rgba(46, 213, 115, 0.1)' : 'transparent';
+        let totalItemsLoaned = 0;
+        let tableRows = memberLoans.map(m => {
+            totalItemsLoaned += m.items.length;
+            const isNewcomer = m.daysInFaction <= 30;
+            const rowBg = isNewcomer ? 'rgba(46, 213, 115, 0.08)' : 'transparent';
             const nameColor = isNewcomer ? '#2ed573' : '#70a1ff';
-            const daysText = loan.daysInFaction === 999 ? 'Left Faction' : `${loan.daysInFaction} days`;
-            
+            const daysText = m.daysInFaction === 999 ? 'Left Faction' : `${m.daysInFaction}d`;
+
+            // Combine items into a clean comma-separated string
+            const itemsCSV = m.items.join(', ');
+
             return `
                 <tr style="border-bottom: 1px solid #2a2a2a; background: ${rowBg};">
                     <td style="padding: 6px 4px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        <a href="https://www.torn.com/profiles.php?XID=${loan.loanedToId}" target="_blank" style="color: ${nameColor}; text-decoration: underline; font-weight: bold; font-size: 12px;">
-                            ${loan.memberName} [${loan.loanedToId}] 🔗
+                        <a href="https://www.torn.com/profiles.php?XID=${m.id}" target="_blank" style="color: ${nameColor}; text-decoration: underline; font-weight: bold; font-size: 12px;">
+                            ${m.name} [${m.id}] 🔗
                         </a>
                         ${isNewcomer ? '<span style="font-size: 10px; color: #2ed573; margin-left: 4px;">(New)</span>' : ''}
                     </td>
                     <td style="padding: 6px 4px; text-align: center; color: #bdbdbd; font-size: 11px; white-space: nowrap;">${daysText}</td>
-                    <td style="padding: 6px 4px; text-align: left; color: #fff; font-size: 12px; white-space: nowrap;">${loan.name}</td>
-                    <td style="padding: 6px 4px; text-align: center; color: #ffa502; font-size: 11px; white-space: nowrap;">${loan.type}</td>
+                    <td style="padding: 6px 4px; text-align: center; color: #ffa502; font-weight: bold; font-size: 12px; white-space: nowrap;">${m.items.length}</td>
+                    <td style="padding: 6px 4px; text-align: left; color: #ddd; font-size: 12px; word-break: break-word; white-space: normal;">
+                        ${itemsCSV}
+                    </td>
                 </tr>
             `;
         }).join('');
 
-        if (loans.length === 0) {
-            tableRows = `<tr><td colspan="4" style="padding: 10px; text-align: center; color: #888; font-style: italic; font-size: 12px;">No items currently loaned out.</td></tr>`;
+        if (memberLoans.length === 0) {
+            tableRows = `<tr><td colspan="4" style="padding: 10px; text-align: center; color: #888; font-style: italic; font-size: 12px;">No active armory loans found.</td></tr>`;
         }
 
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h3 style="margin: 0; color: #fff; font-size: 15px;">🛡️ Live Armory Loan Tracker</h3>
+                <h3 style="margin: 0; color: #fff; font-size: 15px;">🛡️ Armory Loan Summary (${memberLoans.length} Members)</h3>
                 <div>
-                    <span style="font-size: 11px; color: #888; margin-right: 8px;">Active Loans: ${loans.length}</span>
+                    <span style="font-size: 11px; color: #888; margin-right: 8px;">Total Items Out: ${totalItemsLoaned}</span>
                     <button id="btn-refresh-armory" style="background: #333; color: #ccc; border: 1px solid #555; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; margin-right: 6px;">🔄 Refresh</button>
                     <button id="btn-reset-key" style="background: #222; color: #aaa; border: 1px solid #444; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">🔑 Reset Key</button>
                 </div>
@@ -156,17 +172,17 @@
             <div style="overflow-x: auto; width: 100%;">
                 <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;">
                     <colgroup>
-                        <col style="width: 35%;">
-                        <col style="width: 20%;">
                         <col style="width: 25%;">
-                        <col style="width: 20%;">
+                        <col style="width: 10%;">
+                        <col style="width: 10%;">
+                        <col style="width: 55%;">
                     </colgroup>
                     <thead>
                         <tr style="color: #888; font-size: 11px; border-bottom: 2px solid #555; background: #222;">
-                            <th style="text-align: left; padding: 6px 4px;">Loaned To</th>
-                            <th style="text-align: center; padding: 6px 4px;">Time in Faction</th>
-                            <th style="text-align: left; padding: 6px 4px;">Item Name</th>
-                            <th style="text-align: center; padding: 6px 4px;">Category</th>
+                            <th style="text-align: left; padding: 6px 4px;">Member</th>
+                            <th style="text-align: center; padding: 6px 4px;">Days</th>
+                            <th style="text-align: center; padding: 6px 4px;">Count</th>
+                            <th style="text-align: left; padding: 6px 4px;">Loaned Items (CSV)</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -221,8 +237,7 @@
     };
 
     const ensureWidgetVisible = () => {
-        const container = getWidgetContainer();
-        return container;
+        return getWidgetContainer();
     };
 
     const initScript = () => {
