@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Company Competitor Intelligence
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts/raw/main/torn-company-intel-script.js
-// @version      9.0.6
+// @version      9.0.7
 // @license      MIT
 // @description  Fetches real daily/weekly income and customer metrics from /v2/company/snapshot
 // @author       beatrice27
@@ -157,6 +157,7 @@
                 Loading company intelligence...
             </div>
         `;
+        container.dataset.rendered = 'true';
     };
 
     const renderApiKeyPrompt = () => {
@@ -167,6 +168,7 @@
                 <button id="btn-enter-api-key" style="background: #2ed573; color: #111; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;">Enter API Key</button>
             </div>
         `;
+        container.dataset.rendered = 'true';
         attachEventListeners();
     };
 
@@ -249,6 +251,7 @@
             </div>
             <div style="color: #ccc; font-size: 12px;">${msg}</div>
         `;
+        container.dataset.rendered = 'true';
         attachEventListeners();
     };
 
@@ -278,36 +281,31 @@
         if (!container) {
             container = document.createElement('div');
             container.id = 'director-intel-widget';
-            container.style = "background: #191919; color: #fff; padding: 14px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto; position: relative; z-index: 99999;";
+            container.style = "background: #191919; color: #fff; padding: 14px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto; position: relative; z-index: 2147483647;";
 
-            const targetCandidates = [
-                '.content-wrapper',
-                '.main-wrapper',
-                '.page-wrapper',
-                '.company-content',
-                '.content',
-                '#content',
-                '.container',
-                'body'
-            ];
-            const targetEl = targetCandidates.map(sel => document.querySelector(sel)).find(Boolean) || document.body;
-
-            if (targetEl && typeof targetEl.prepend === 'function') {
-                targetEl.prepend(container);
-            } else if (document.body) {
-                document.body.prepend(container);
+            const fallbackTarget = document.body || document.documentElement;
+            if (fallbackTarget) {
+                fallbackTarget.appendChild(container);
             }
+
+            const observer = new MutationObserver(() => {
+                if (fallbackTarget && !fallbackTarget.contains(container)) {
+                    fallbackTarget.appendChild(container);
+                }
+            });
+            observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
         }
         return container;
     };
 
     const ensureWidgetVisible = () => {
         const container = getWidgetContainer();
-        if (!container.parentNode) {
-            const fallbackTarget = document.body || document.documentElement;
-            if (fallbackTarget) {
-                fallbackTarget.prepend(container);
-            }
+        const fallbackTarget = document.body || document.documentElement;
+        if (fallbackTarget && !fallbackTarget.contains(container)) {
+            fallbackTarget.appendChild(container);
+        }
+        if (container.parentNode !== fallbackTarget) {
+            fallbackTarget.appendChild(container);
         }
         return container;
     };
