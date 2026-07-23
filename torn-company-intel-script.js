@@ -295,11 +295,18 @@
         if (!container) {
             container = document.createElement('div');
             container.id = 'director-intel-widget';
-            container.style = "background: #191919; color: #fff; padding: 14px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto; position: relative; z-index: 2147483647;";
+            container.style = "background: #191919; color: #fff; padding: 12px; margin: 10px 0; border: 1px solid #333; border-radius: 5px; font-family: Arial, sans-serif; display: block; width: 100%; box-sizing: border-box; overflow-x: auto; position: relative; z-index: 99999;";
 
-            const fallbackTarget = document.body || document.documentElement;
-            if (fallbackTarget) {
-                fallbackTarget.appendChild(container);
+            const targetEl = document.querySelector('#mainContainer')
+                || document.querySelector('.content-wrapper')
+                || document.querySelector('.main-wrapper')
+                || document.querySelector('.content')
+                || document.body;
+
+            if (targetEl && targetEl.firstChild) {
+                targetEl.insertBefore(container, targetEl.firstChild);
+            } else if (targetEl) {
+                targetEl.appendChild(container);
             }
         }
         return container;
@@ -307,9 +314,17 @@
 
     const ensureWidgetVisible = () => {
         const container = getWidgetContainer();
-        const fallbackTarget = document.body || document.documentElement;
-        if (fallbackTarget && !fallbackTarget.contains(container)) {
-            fallbackTarget.appendChild(container);
+        const targetEl = document.querySelector('#mainContainer')
+            || document.querySelector('.content-wrapper')
+            || document.querySelector('.main-wrapper')
+            || document.querySelector('.content')
+            || document.body;
+        if (targetEl && !targetEl.contains(container)) {
+            if (targetEl.firstChild) {
+                targetEl.insertBefore(container, targetEl.firstChild);
+            } else {
+                targetEl.appendChild(container);
+            }
         }
         return container;
     };
@@ -324,16 +339,20 @@
         }
     };
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => refreshWidget(), { once: true });
-    } else {
+    // Robust multi-environment launcher (Desktop + Torn PDA / Mobile)
+    const initScript = () => {
+        if (window.__director_intel_initialized) return;
+        window.__director_intel_initialized = true;
         refreshWidget();
+    };
+
+    if (document.readyState === 'interactive' || document.readyState === 'complete') {
+        initScript();
+    } else {
+        document.addEventListener('DOMContentLoaded', initScript, { once: true });
+        window.addEventListener('load', initScript, { once: true });
     }
 
-    window.addEventListener('pageshow', () => refreshWidget(true));
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            refreshWidget(true);
-        }
-    });
+    // Backup trigger for mobile SPA navigation transitions
+    setTimeout(initScript, 1000);
 })();
