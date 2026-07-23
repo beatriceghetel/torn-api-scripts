@@ -207,13 +207,13 @@
         return `
             <div style="margin-bottom: 14px;">
                 <h4 style="margin: 4px 0; color: #eccc68; border-bottom: 1px solid #444; padding-bottom: 3px; font-size: 13px;">${title}</h4>
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; min-width: 0;">
                     <colgroup>
-                        <col style="width: 40%;">
-                        <col style="width: 12%;">
-                        <col style="width: 16%;">
-                        <col style="width: 16%;">
-                        <col style="width: 16%;">
+                        <col style="width: 38%;">
+                        <col style="width: 10%;">
+                        <col style="width: 17%;">
+                        <col style="width: 17%;">
+                        <col style="width: 18%;">
                     </colgroup>
                     <thead>
                         <tr style="color: #888; text-align: right; font-size: 11px;">
