@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Company Competitor Intelligence
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts/raw/main/torn-company-intel-script.js
-// @version      9.0.8
+// @version      9.0.9
 // @license      MIT
 // @description  Fetches real daily/weekly income and customer metrics from /v2/company/snapshot
 // @author       beatrice27
@@ -177,53 +177,39 @@
         attachEventListeners();
     };
 
-    const renderTableSection = (title, list) => {
+    const renderCategoryRows = (title, list) => {
         if (!list || list.length === 0) {
             return `
-                <div style="margin-bottom: 12px;">
-                    <h4 style="margin: 4px 0; color: #eccc68; border-bottom: 1px solid #444; padding-bottom: 3px; font-size: 13px;">${title}</h4>
-                    <div style="color: #888; padding: 6px; font-style: italic; font-size: 12px;">No companies found in this tier.</div>
-                </div>`;
+                <tr style="background: #222; border-bottom: 1px solid #444;">
+                    <td colspan="5" style="padding: 6px 4px; color: #eccc68; font-weight: bold; font-size: 13px;">${title}</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #2a2a2a;">
+                    <td colspan="5" style="padding: 8px; color: #888; font-style: italic; font-size: 12px;">No companies found in this tier.</td>
+                </tr>`;
         }
 
         let rows = list.map(c => {
             const ageText = Number.isFinite(c.daysOld) ? c.daysOld.toLocaleString() : '—';
             return `
                 <tr style="border-bottom: 1px solid #2a2a2a;">
-                    <td style="padding: 6px; text-align: left; white-space: normal; word-break: break-word;">
-                        <a href="https://www.torn.com/joblist.php#/p=corpinfo&ID=${c.id}" target="_blank" style="color: #70a1ff; text-decoration: underline; font-weight: bold; display: inline-block;"> ${c.name} 🔗</a>
+                    <td style="padding: 6px 4px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        <a href="https://www.torn.com/joblist.php#/p=corpinfo&ID=${c.id}" target="_blank" style="color: #70a1ff; text-decoration: underline; font-weight: bold; font-size: 12px; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            ${c.name} 🔗
+                        </a>
                     </td>
-                    <td style="padding: 6px; text-align: center; color: #bdbdbd; white-space: nowrap;">${ageText}</td>
-                    <td style="padding: 6px; text-align: right; color: #2ed573; font-weight: bold; white-space: nowrap;">${formatCurrency(c.dailyIncome)}</td>
-                    <td style="padding: 6px; text-align: right; color: #1e90ff; white-space: nowrap;">${c.dailyCustomers.toLocaleString()}</td>
-                    <td style="padding: 6px; text-align: right; color: #ffa502; font-weight: bold; white-space: nowrap;">${formatCurrency(c.weeklyIncome)}</td>
+                    <td style="padding: 6px 4px; text-align: center; color: #bdbdbd; white-space: nowrap;">${ageText}</td>
+                    <td style="padding: 6px 4px; text-align: right; color: #2ed573; font-weight: bold; white-space: nowrap;">${formatCurrency(c.dailyIncome)}</td>
+                    <td style="padding: 6px 4px; text-align: right; color: #1e90ff; white-space: nowrap;">${c.dailyCustomers.toLocaleString()}</td>
+                    <td style="padding: 6px 4px; text-align: right; color: #ffa502; font-weight: bold; white-space: nowrap;">${formatCurrency(c.weeklyIncome)}</td>
                 </tr>
             `;
         }).join('');
 
         return `
-            <div style="margin-bottom: 14px; overflow-x: auto; width: 100%;">
-                <h4 style="margin: 4px 0; color: #eccc68; border-bottom: 1px solid #444; padding-bottom: 3px; font-size: 13px;">${title}</h4>
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; min-width: 600px;">
-                    <colgroup>
-                        <col style="width: 40%;">
-                        <col style="width: 10%;">
-                        <col style="width: 15%;">
-                        <col style="width: 17%;">
-                        <col style="width: 18%;">
-                    </colgroup>
-                    <thead>
-                        <tr style="color: #888; text-align: right; font-size: 11px;">
-                            <th style="text-align: left; padding: 4px; white-space: nowrap;">Company Name</th>
-                            <th style="padding: 4px; white-space: nowrap;">Age</th>
-                            <th style="padding: 4px; white-space: nowrap;">Daily Sales</th>
-                            <th style="padding: 4px; white-space: nowrap;">Daily Customers</th>
-                            <th style="padding: 4px; white-space: nowrap;">Weekly Rev.</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
+            <tr style="background: #222; border-top: 2px solid #444; border-bottom: 1px solid #444;">
+                <td colspan="5" style="padding: 6px 4px; color: #eccc68; font-weight: bold; font-size: 13px;">${title}</td>
+            </tr>
+            ${rows}
         `;
     };
 
@@ -239,9 +225,32 @@
                     <button id="btn-reset-key" style="background: #222; color: #aaa; border: 1px solid #444; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">🔑 Reset Key</button>
                 </div>
             </div>
-            ${renderTableSection(`⭐ Top Competitors (${myRating}-Star Tier)`, top3Same)}
-            ${renderTableSection(`📈 Lowest Revenue (${targetRating}-Star Tier)`, bottom3Target)}
-            ${renderTableSection(`🏆 Top Competitors (${targetRating}-Star Tier)`, top3Target)}
+
+            <div style="overflow-x: auto; width: 100%;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;">
+                    <colgroup>
+                        <col style="width: 35%;">
+                        <col style="width: 12%;">
+                        <col style="width: 17%;">
+                        <col style="width: 16%;">
+                        <col style="width: 20%;">
+                    </colgroup>
+                    <thead>
+                        <tr style="color: #888; font-size: 11px; border-bottom: 2px solid #555;">
+                            <th style="text-align: left; padding: 6px 4px;">Company Name</th>
+                            <th style="text-align: center; padding: 6px 4px;">Age</th>
+                            <th style="text-align: right; padding: 6px 4px;">Daily Sales</th>
+                            <th style="text-align: right; padding: 6px 4px;">Customers</th>
+                            <th style="text-align: right; padding: 6px 4px;">Weekly Rev.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${renderCategoryRows(`⭐ Top Competitors (${myRating}-Star Tier)`, top3Same)}
+                        ${renderCategoryRows(`📈 Lowest Revenue (${targetRating}-Star Tier)`, bottom3Target)}
+                        ${renderCategoryRows(`🏆 Top Competitors (${targetRating}-Star Tier)`, top3Target)}
+                    </tbody>
+                </table>
+            </div>
         `;
 
         attachEventListeners();
