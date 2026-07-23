@@ -190,8 +190,8 @@
             const ageText = Number.isFinite(c.daysOld) ? c.daysOld.toLocaleString() : '—';
             return `
                 <tr style="border-bottom: 1px solid #2a2a2a;">
-                    <td style="padding: 6px; text-align: left; overflow-wrap: anywhere;">
-                        <a href="https://www.torn.com/joblist.php#/p=corpinfo&ID=${c.id}" target="_blank" style="color: #70a1ff; text-decoration: underline; font-weight: bold;"> ${c.name} 🔗</a>
+                    <td style="padding: 6px; text-align: left; white-space: normal; word-break: break-word;">
+                        <a href="https://www.torn.com/joblist.php#/p=corpinfo&ID=${c.id}" target="_blank" style="color: #70a1ff; text-decoration: underline; font-weight: bold; display: inline-block;"> ${c.name} 🔗</a>
                     </td>
                     <td style="padding: 6px; text-align: center; color: #bdbdbd; white-space: nowrap;">${ageText}</td>
                     <td style="padding: 6px; text-align: right; color: #2ed573; font-weight: bold; white-space: nowrap;">${formatCurrency(c.dailyIncome)}</td>
@@ -202,13 +202,13 @@
         }).join('');
 
         return `
-            <div style="margin-bottom: 14px;">
+            <div style="margin-bottom: 14px; overflow-x: auto; width: 100%;">
                 <h4 style="margin: 4px 0; color: #eccc68; border-bottom: 1px solid #444; padding-bottom: 3px; font-size: 13px;">${title}</h4>
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; min-width: 0;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; min-width: 600px;">
                     <colgroup>
-                        <col style="width: 38%;">
+                        <col style="width: 40%;">
                         <col style="width: 10%;">
-                        <col style="width: 17%;">
+                        <col style="width: 15%;">
                         <col style="width: 17%;">
                         <col style="width: 18%;">
                     </colgroup>
