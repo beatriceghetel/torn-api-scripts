@@ -17,13 +17,10 @@
 
     let apiKey = GM_getValue('torn_api_key', '');
 
-    const createDebugBanner = () => {
-        const banner = document.createElement('div');
-        banner.id = 'director-intel-debug-banner';
-        banner.textContent = 'Director Intel script started';
-        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4757;color:white;padding:8px 12px;z-index:2147483647;font-size:12px;text-align:center;';
-        document.body.appendChild(banner);
-        setTimeout(() => banner.remove(), 4000);
+    const refreshWidget = (forceRefresh = false) => {
+        ensureWidgetVisible();
+        renderLoadingState();
+        fetchIntel(forceRefresh);
     };
 
     const fetchIntel = (forceRefresh = false) => {
@@ -318,7 +315,16 @@
         }
     };
 
-    createDebugBanner();
-    renderLoadingState();
-    fetchIntel();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => refreshWidget(), { once: true });
+    } else {
+        refreshWidget();
+    }
+
+    window.addEventListener('pageshow', () => refreshWidget(true));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            refreshWidget(true);
+        }
+    });
 })();
