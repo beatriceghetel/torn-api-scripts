@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Company Competitor Intelligence
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts/raw/main/torn-company-intel-script.js
-// @version      9.0.7
+// @version      9.0.8
 // @license      MIT
 // @description  Fetches real daily/weekly income and customer metrics from /v2/company/snapshot
 // @author       beatrice27
@@ -67,10 +67,9 @@
                 const myRating = Number(myComp.company?.rating || 1);
 
                 // 2. Fetch Global CSV Snapshot
-                const currentTimestamp = Math.floor(Date.now() / 1000);
                 GM_xmlhttpRequest({
                     method: "GET",
-                    url: `https://api.torn.com/v2/company/snapshot?key=${apiKey}&timestamp=${currentTimestamp}`,
+                    url: `https://api.torn.com/v2/company/snapshot?key=${apiKey}`,
                     onload: (csvRes) => {
                         if (csvRes.status !== 200) {
                             renderError("Snapshot request failed. Ensure API key has Public access.", csvRes.responseText);
