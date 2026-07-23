@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Company Competitor Intelligence
-// @namespace    http://tampermonkey.net/
-// @version      9.0.3
+// @namespace    https://github.com/beatriceghetel/torn-api-scripts/raw/main/torn-company-intel-script.js
+// @version      9.0.4
 // @license      MIT
 // @description  Fetches real daily/weekly income and customer metrics from /v2/company/snapshot
 // @author       beatrice27
@@ -160,25 +160,31 @@
 
         let rows = list.map(c => `
             <tr style="border-bottom: 1px solid #2a2a2a;">
-                <td style="padding: 6px; text-align: left;">
+                <td style="padding: 6px; text-align: left; overflow-wrap: anywhere;">
                     <a href="https://www.torn.com/joblist.php#/p=corpinfo&ID=${c.id}" target="_blank" style="color: #70a1ff; text-decoration: underline; font-weight: bold;"> ${c.name} 🔗</a>
                 </td>
-                <td style="padding: 6px; text-align: right; color: #2ed573; font-weight: bold;">${formatCurrency(c.dailyIncome)}</td>
-                <td style="padding: 6px; text-align: right; color: #1e90ff;">${c.dailyCustomers.toLocaleString()}</td>
-                <td style="padding: 6px; text-align: right; color: #ffa502; font-weight: bold;">${formatCurrency(c.weeklyIncome)}</td>
+                <td style="padding: 6px; text-align: right; color: #2ed573; font-weight: bold; white-space: nowrap;">${formatCurrency(c.dailyIncome)}</td>
+                <td style="padding: 6px; text-align: right; color: #1e90ff; white-space: nowrap;">${c.dailyCustomers.toLocaleString()}</td>
+                <td style="padding: 6px; text-align: right; color: #ffa502; font-weight: bold; white-space: nowrap;">${formatCurrency(c.weeklyIncome)}</td>
             </tr>
         `).join('');
 
         return `
             <div style="margin-bottom: 14px;">
                 <h4 style="margin: 4px 0; color: #eccc68; border-bottom: 1px solid #444; padding-bottom: 3px; font-size: 13px;">${title}</h4>
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;">
+                    <colgroup>
+                        <col style="width: 44%;">
+                        <col style="width: 20%;">
+                        <col style="width: 16%;">
+                        <col style="width: 20%;">
+                    </colgroup>
                     <thead>
                         <tr style="color: #888; text-align: right; font-size: 11px;">
-                            <th style="text-align: left; padding: 4px;">Company Name</th>
-                            <th style="padding: 4px;">Daily Sales</th>
-                            <th style="padding: 4px;">Daily Customers</th>
-                            <th style="padding: 4px;">Weekly Rev.</th>
+                            <th style="text-align: left; padding: 4px; white-space: nowrap;">Company Name</th>
+                            <th style="padding: 4px; white-space: nowrap;">Daily Sales</th>
+                            <th style="padding: 4px; white-space: nowrap;">Daily Customers</th>
+                            <th style="padding: 4px; white-space: nowrap;">Weekly Rev.</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
