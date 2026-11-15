@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn Faction-Filtered War & Chain Payout Engine
+// @name         Torn War & Chain Payout Engine (Flexible Pools & Retal Fix)
 // @namespace    http://tampermonkey.net/
-// @version      3.0.5
-// @description  Accurate faction war and chain payout engine with correct API key mappings for retals and assists.
+// @version      9.3.0
+// @description  Automated faction payout calculator with flexible pool distribution modes and fixed retal/assist parsing.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -127,7 +127,7 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ Faction-Filtered War & Chain Engine</span>
+                <span>⚔️ War & Chain Payout Engine (Flexible Pool Split)</span>
                 <div>
                     <button id="wp-run-btn" class="wp-btn scan">🚀 Calculate Payslips</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
@@ -140,7 +140,7 @@
             <div class="wp-id-bar">
                 <div style="flex: 1; min-width: 150px;">
                     <label style="font-size:11px; color:#aaa; display:block; margin-bottom:3px;">Ranked War ID (<code>rankID</code>):</label>
-                    <input type="text" id="wp-quick-rankid" class="wp-input" value="${savedRankId}" placeholder="e.g. 12345 (optional)">
+                    <input type="text" id="wp-quick-rankid" class="wp-input" value="${savedRankId}" placeholder="e.g. 12345">
                 </div>
                 <div style="flex: 2; min-width: 240px;">
                     <label style="font-size:11px; color:#aaa; display:block; margin-bottom:3px;">Chain IDs (comma-separated):</label>
@@ -183,6 +183,7 @@
                         <label>Remaining Pool Split By:</label>
                         <select id="wp-split-basis" class="wp-input">
                             <option value="score" ${cfg.splitBasis === 'score' ? 'selected' : ''}>War Score (Scoreboard)</option>
+                            <option value="warhits" ${cfg.splitBasis === 'warhits' ? 'selected' : ''}>War Hits % (Proportional)</option>
                             <option value="respect" ${cfg.splitBasis === 'respect' ? 'selected' : ''}>Chain Respect Gained</option>
                             <option value="none" ${cfg.splitBasis === 'none' ? 'selected' : ''}>Do Not Split Remainder</option>
                         </select>
@@ -386,8 +387,8 @@
                     const totalChainAtks = parseInt(mStats.attacks, 10) || 0;
                     const chainWarAtks = parseInt(mStats.war, 10) || 0;
                     
-                    // FIX: Chainreport API keys are 'retaliation' and 'assist' (singular)
-                    const retals = parseInt(mStats.retaliation, 10) || parseInt(mStats.retaliations, 10) || 0;
+                    // Robust check across singular/plural key variations for retals & assists
+                    const retals = parseInt(mStats.retaliation, 10) || parseInt(mStats.retaliations, 10) || parseInt(mStats.retal, 10) || parseInt(mStats.retals, 10) || 0;
                     const assists = parseInt(mStats.assist, 10) || parseInt(mStats.assists, 10) || 0;
                     const respect = parseFloat(mStats.respect) || 0;
 
@@ -445,6 +446,7 @@
 
         activeMembers.forEach(m => {
             if (splitBasis === 'score') totalMetric += m.warScore;
+            else if (splitBasis === 'warhits') totalMetric += m.warHits;
             else if (splitBasis === 'respect') totalMetric += m.respect;
 
             m.basePay = (m.warHits * rateWar) +
@@ -461,14 +463,22 @@
             : 0;
 
         activeMembers.forEach(m => {
-            const memberMetric = splitBasis === 'score' ? m.warScore : (splitBasis === 'respect' ? m.respect : 0);
+            let memberMetric = 0;
+            if (splitBasis === 'score') memberMetric = m.warScore;
+            else if (splitBasis === 'warhits') memberMetric = m.warHits;
+            else if (splitBasis === 'respect') memberMetric = m.respect;
+
             m.poolBonus = memberMetric * perUnitBonus;
             m.finalPay = m.basePay + m.poolBonus;
         });
 
         activeMembers.sort((a, b) => b.finalPay - a.finalPay);
         const totalDistributed = activeMembers.reduce((sum, m) => sum + m.finalPay, 0);
-        const basisLabel = splitBasis === 'score' ? 'War Score' : (splitBasis === 'respect' ? 'Chain Respect' : 'None');
+        
+        let basisLabel = 'War Score';
+        if (splitBasis === 'warhits') basisLabel = 'War Hits %';
+        else if (splitBasis === 'respect') basisLabel = 'Chain Respect';
+        else if (splitBasis === 'none') basisLabel = 'None';
 
         let html = `
             <div class="wp-summary-bar">
