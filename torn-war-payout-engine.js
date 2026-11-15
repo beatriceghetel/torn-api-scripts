@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn War & Chain Payout Engine (Public API Edition)
+// @name         Torn War & Chain Payout Engine (Clean Public API)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
-// @description  Calculates war and chain payslips using public faction endpoints (no Faction API permission required).
+// @version      1.1.1
+// @description  Calculates war and chain payslips using clean public faction endpoints without faction ID constraints.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -46,7 +46,6 @@
     document.head.appendChild(styleSheet);
 
     let compiledMemberStats = {};
-    let factionId = null;
     let factionMembers = {};
 
     function apiGet(url) {
@@ -91,7 +90,7 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ Faction War & Chain Payout Engine (Public API)</span>
+                <span>⚔️ Faction War & Chain Payout Engine (Clean Public API)</span>
                 <div>
                     <button id="wp-run-btn" class="wp-btn">Scan War & Chains</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
@@ -155,7 +154,7 @@
 
             <!-- API Settings Panel -->
             <div id="wp-settings-panel" class="wp-panel">
-                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter any standard <b>Public</b> or <b>Limited</b> Torn API Key (no special faction permissions needed):</p>
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter any standard <b>Public</b> or <b>Limited</b> Torn API Key:</p>
                 <div style="display:flex; gap:8px; max-width: 450px;">
                     <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste Torn API Key...">
                     <button id="wp-save-key-btn" class="wp-btn">Save</button>
@@ -235,10 +234,9 @@
         const endTime = endVal ? Math.floor(new Date(endVal).getTime() / 1000) : now;
 
         try {
-            // 1. Fetch public basic faction info (works with any Public API key)
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching faction roster & public metadata...</p>`;
+            // 1. Fetch faction basic info implicitly tied to the key owner
+            resultsEl.innerHTML = `<p style="color:#ffca28;>Fetching faction roster...</p>`;
             const basicData = await apiGet(`https://api.torn.com/faction/?selections=basic&key=${apiKey}`);
-            factionId = String(basicData.ID);
             factionMembers = basicData.members || {};
 
             const stats = {};
@@ -261,34 +259,45 @@
 
             Object.entries(factionMembers).forEach(([id, info]) => ensureMember(id, info.name));
 
-            // 2. Fetch Ranked Wars list (Public selection)
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Checking Ranked Wars in window...</p>`;
-            const rwData = await apiGet(`https://api.torn.com/faction/${factionId}?selections=rankedwars&key=${apiKey}`);
+            // 2. Fetch Ranked Wars list (Implicit faction route)
+            resultsEl.innerHTML = `<p style="color:#ffca28;">Checking Ranked Wars...</p>`;
+            const rwData = await apiGet(`https://api.torn.com/faction/?selections=rankedwars&key=${apiKey}`);
             const rankedWars = rwData.rankedwars || {};
 
             for (const [warId, warInfo] of Object.entries(rankedWars)) {
                 const warStart = warInfo.war?.start || 0;
                 const warEnd = warInfo.war?.end || now;
 
-                // Include war if it overlaps with the selected window
                 if (warEnd >= startTime && warStart <= endTime) {
                     resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Ranked War Report #${warId}...</p>`;
                     const reportData = await apiGet(`https://api.torn.com/torn/${warId}?selections=rankedwarreport&key=${apiKey}`);
-                    const ourFactionReport = reportData.rankedwarreport?.factions?.[factionId];
+                    
+                    // Find our faction data inside the global ranked war report
+                    const factionsInReport = reportData.rankedwarreport?.factions || {};
+                    let ourFactionReport = null;
+                    
+                    for (const fId of Object.keys(factionsInReport)) {
+                        // Check if this entry corresponds to our faction members
+                        const membersObj = factionsInReport[fId].members || {};
+                        const sampleMemberId = Object.keys(membersObj)[0];
+                        if (sampleMemberId && factionMembers[sampleMemberId]) {
+                            ourFactionReport = factionsInReport[fId];
+                            break;
+                        }
+                    }
 
                     if (ourFactionReport && ourFactionReport.members) {
                         Object.entries(ourFactionReport.members).forEach(([mId, mStats]) => {
                             const rec = ensureMember(mId, mStats.name);
                             rec.warHits += (parseInt(mStats.attacks, 10) || 0);
-                            // Note: War score is tracked separately; respect comes from chain reports below
                         });
                     }
                 }
             }
 
-            // 3. Fetch Chains list (Public selection)
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching all Chains & Mini-Chains in window...</p>`;
-            const chainsData = await apiGet(`https://api.torn.com/faction/${factionId}?selections=chains&key=${apiKey}`);
+            // 3. Fetch Chains list (Implicit faction route)
+            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Chains list...</p>`;
+            const chainsData = await apiGet(`https://api.torn.com/faction/?selections=chains&key=${apiKey}`);
             const chains = chainsData.chains || {};
 
             const matchingChainIds = Object.entries(chains)
@@ -310,7 +319,6 @@
                     const chainAssists = parseInt(mStats.assists, 10) || 0;
                     const chainRespect = parseFloat(mStats.respect) || 0;
 
-                    // Non-war hits made during the chain = total chain attacks minus war hits inside that chain
                     const pureChainHits = Math.max(0, totalChainAttacks - chainWarHits);
 
                     rec.chainHits += pureChainHits;
@@ -319,7 +327,6 @@
                     rec.respect += chainRespect;
                 });
 
-                // Small pause to respect Torn's 100 req/min rate limit
                 await new Promise(r => setTimeout(r, 250));
             }
 
