@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn War & Chain Payout Engine
 // @namespace    http://tampermonkey.net/
-// @version      3.1.0
-// @description  Automated faction payout calculator with flexible pool distribution modes and fixed retal/assist parsing.
+// @version      3.1.1
+// @description  Fixed pool split calculation matching War Hits % divisor and multiplier correctly.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -127,7 +127,7 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ War & Chain Payout Engine (Flexible Pool Split)</span>
+                <span>⚔️ War & Chain Payout Engine (v9.3.1)</span>
                 <div>
                     <button id="wp-run-btn" class="wp-btn scan">🚀 Calculate Payslips</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
@@ -387,7 +387,6 @@
                     const totalChainAtks = parseInt(mStats.attacks, 10) || 0;
                     const chainWarAtks = parseInt(mStats.war, 10) || 0;
                     
-                    // Robust check across singular/plural key variations for retals & assists
                     const retals = parseInt(mStats.retaliation, 10) || parseInt(mStats.retaliations, 10) || parseInt(mStats.retal, 10) || parseInt(mStats.retals, 10) || 0;
                     const assists = parseInt(mStats.assist, 10) || parseInt(mStats.assists, 10) || 0;
                     const respect = parseFloat(mStats.respect) || 0;
