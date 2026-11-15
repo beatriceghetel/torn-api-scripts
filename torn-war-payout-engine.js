@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Faction Full War & Payout Engine
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  Deep-paginating faction war, chain, retal, and assist tracker with automated payout calculations and CSV export.
 // @author       beatrice
 // @license      MIT
