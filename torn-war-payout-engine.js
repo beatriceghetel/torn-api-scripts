@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn Pure API Faction War & Chain Payout Engine
+// @name         Torn War & Chain Report Payout Engine
 // @namespace    http://tampermonkey.net/
-// @version      2.0.3
-// @description  Fully automated Torn faction war, mini-chain, retal, and assist payout calculator via pure API extraction.
+// @version      3.0.0
+// @description  Pulls permanent ranked war and chain reports from Torn API for accurate payslips and bonus splits.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -14,8 +14,6 @@
 
 (function() {
     'use strict';
-
-    const MAX_CHUNKS = 50; // Up to 5,000 historical attack logs
 
     const styles = `
         .war-payout-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
@@ -85,7 +83,6 @@
             pool: GM_getValue('wp_pool', '1000000000'),
             warHit: GM_getValue('wp_war_hit', '1000000'),
             chainHit: GM_getValue('wp_chain_hit', '120000'),
-            nonWarHit: GM_getValue('wp_non_war_hit', '50000'),
             retal: GM_getValue('wp_retal', '10000'),
             assist: GM_getValue('wp_assist', '25000'),
             respectRate: GM_getValue('wp_respect_rate', '0'),
@@ -94,13 +91,12 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ Faction War & Chain Payout Engine (Pure API)</span>
+                <span>⚔️ Permanent War & Chain Report Engine</span>
                 <div>
-                    <button id="wp-run-btn" class="wp-btn scan">🚀 Run API Scan</button>
+                    <button id="wp-run-btn" class="wp-btn scan">🚀 Fetch War Reports</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
-                    <button id="wp-toggle-dates-btn" class="wp-btn secondary">📅 Time Window</button>
                     <button id="wp-toggle-settings-btn" class="wp-btn secondary">⚙️ API Key</button>
-                    <button id="wp-export-btn" class="wp-btn export" style="display: none;">📥 Export CSV File</button>
+                    <button id="wp-export-btn" class="wp-btn export" style="display: none;">📥 Export CSV</button>
                 </div>
             </div>
 
@@ -120,10 +116,6 @@
                         <input type="number" id="wp-chain-hit" class="wp-input" value="${cfg.chainHit}">
                     </div>
                     <div class="wp-field">
-                        <label>Non-War Hit Pay ($):</label>
-                        <input type="number" id="wp-non-war-hit" class="wp-input" value="${cfg.nonWarHit}">
-                    </div>
-                    <div class="wp-field">
                         <label>Retaliation Bonus ($):</label>
                         <input type="number" id="wp-retal" class="wp-input" value="${cfg.retal}">
                     </div>
@@ -132,37 +124,22 @@
                         <input type="number" id="wp-assist" class="wp-input" value="${cfg.assist}">
                     </div>
                     <div class="wp-field">
-                        <label>Fixed $/Respect (Optional):</label>
+                        <label>Fixed $/Score (Optional):</label>
                         <input type="number" id="wp-respect-rate" class="wp-input" value="${cfg.respectRate}">
                     </div>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <label style="font-size:12px; color:#ffca28; cursor:pointer;">
                         <input type="checkbox" id="wp-split-remainder" ${cfg.splitRemainder ? 'checked' : ''}> 
-                        Auto-split remaining Reward Pool proportionally by <b>Respect Gained</b>
+                        Auto-split remaining Reward Pool proportionally by <b>War Score</b>
                     </label>
                     <button id="wp-recalc-btn" class="wp-btn">Save & Recalculate</button>
                 </div>
             </div>
 
-            <!-- Date Window Panel -->
-            <div id="wp-dates-panel" class="wp-panel">
-                <p style="font-size:12px; color:#aaa; margin-top:0;">Set the war timeframe (defaults to past 7 days if blank):</p>
-                <div class="wp-grid" style="max-width: 500px; margin-bottom: 0;">
-                    <div class="wp-field">
-                        <label>Window Start:</label>
-                        <input type="datetime-local" id="wp-start-date" class="wp-input">
-                    </div>
-                    <div class="wp-field">
-                        <label>Window End:</label>
-                        <input type="datetime-local" id="wp-end-date" class="wp-input">
-                    </div>
-                </div>
-            </div>
-
             <!-- API Settings Panel -->
             <div id="wp-settings-panel" class="wp-panel">
-                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter your Faction-Enabled API Key:</p>
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter your API Key:</p>
                 <div style="display:flex; gap:8px; max-width: 450px;">
                     <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste API Key...">
                     <button id="wp-save-key-btn" class="wp-btn">Save</button>
@@ -172,7 +149,7 @@
 
             <div id="wp-results">
                 ${savedKey ? 
-                  '<p style="color: #aaa; font-size:12px;">Click <b>🚀 Run API Scan</b> to automatically fetch your faction roster and attack logs directly from the Torn API.</p>' : 
+                  '<p style="color: #aaa; font-size:12px;">Click <b>🚀 Fetch War Reports</b> to pull exact war scores and hits directly from Torn report logs.</p>' : 
                   '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ API Key</b> above to configure it.</p>'}
             </div>
         `;
@@ -181,7 +158,6 @@
 
         const panels = {
             payout: document.getElementById('wp-payout-panel'),
-            dates: document.getElementById('wp-dates-panel'),
             settings: document.getElementById('wp-settings-panel')
         };
 
@@ -192,7 +168,6 @@
         }
 
         document.getElementById('wp-toggle-payout-btn').addEventListener('click', () => togglePanel('payout'));
-        document.getElementById('wp-toggle-dates-btn').addEventListener('click', () => togglePanel('dates'));
         document.getElementById('wp-toggle-settings-btn').addEventListener('click', () => togglePanel('settings'));
 
         document.getElementById('wp-save-key-btn').addEventListener('click', () => {
@@ -208,7 +183,6 @@
             GM_setValue('wp_pool', document.getElementById('wp-pool').value);
             GM_setValue('wp_war_hit', document.getElementById('wp-war-hit').value);
             GM_setValue('wp_chain_hit', document.getElementById('wp-chain-hit').value);
-            GM_setValue('wp_non_war_hit', document.getElementById('wp-non-war-hit').value);
             GM_setValue('wp_retal', document.getElementById('wp-retal').value);
             GM_setValue('wp_assist', document.getElementById('wp-assist').value);
             GM_setValue('wp_respect_rate', document.getElementById('wp-respect-rate').value);
@@ -225,27 +199,27 @@
                 togglePanel('settings');
                 return;
             }
-            startApiScan(apiKey);
+            fetchWarReports(apiKey);
         });
 
         document.getElementById('wp-export-btn').addEventListener('click', exportPayslipsCSV);
     }
 
-    async function startApiScan(apiKey) {
+    async function fetchWarReports(apiKey) {
         const resultsEl = document.getElementById('wp-results');
         document.getElementById('wp-export-btn').style.display = 'none';
 
-        const now = Math.floor(Date.now() / 1000);
-        const startVal = document.getElementById('wp-start-date').value;
-        const endVal = document.getElementById('wp-end-date').value;
-
-        const startTime = startVal ? Math.floor(new Date(startVal).getTime() / 1000) : (now - (7 * 24 * 60 * 60));
-        let scanTo = endVal ? Math.floor(new Date(endVal).getTime() / 1000) : now;
-        if (scanTo > now) scanTo = now;
-
         try {
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching faction roster via API...</p>`;
-            const basicData = await apiGet(`https://api.torn.com/faction/?selections=basic&key=${apiKey}`);
+            resultsEl.innerHTML = `<p style="color:#ffca28;">Identifying faction ID and fetching roster...</p>`;
+            const profileData = await apiGet(`https://api.torn.com/user/?selections=profile&key=${apiKey}`);
+            const myFactionId = profileData.faction?.faction_id;
+
+            if (!myFactionId) {
+                resultsEl.innerHTML = `<p style="color:#f44336;">Error: API key owner is not in a faction.</p>`;
+                return;
+            }
+
+            const basicData = await apiGet(`https://api.torn.com/faction/${myFactionId}?selections=basic&key=${apiKey}`);
             const members = basicData.members || {};
 
             const stats = {};
@@ -255,80 +229,69 @@
                     name: info.name,
                     warHits: 0,
                     chainHits: 0,
-                    nonWarHits: 0,
                     retals: 0,
                     assists: 0,
                     respect: 0
                 };
             });
 
-            // Paginate historical attacks
-            let allAttacks = {};
-            let chunk = 0;
-            let currentTo = scanTo;
+            // Fetch Ranked Wars list
+            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching ranked war history...</p>`;
+            const rwList = await apiGet(`https://api.torn.com/faction/${myFactionId}?selections=rankedwars&key=${apiKey}`);
+            const rankedWars = rwList.rankedwars || {};
 
-            while (chunk < MAX_CHUNKS) {
-                chunk++;
-                resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching attack logs (Chunk ${chunk}/${MAX_CHUNKS})... Reached ${new Date(currentTo * 1000).toLocaleString()}</p>`;
+            let foundReport = false;
+            for (const [warId, warInfo] of Object.entries(rankedWars)) {
+                resultsEl.innerHTML = `<p style="color:#ffca28;">Reading Ranked War Report #${warId}...</p>`;
+                try {
+                    const reportData = await apiGet(`https://api.torn.com/torn/${warId}?selections=rankedwarreport&key=${apiKey}`);
+                    const factions = reportData.rankedwarreport?.factions || {};
+                    const ourFactionReport = factions[myFactionId];
 
-                const attackData = await apiGet(`https://api.torn.com/faction/?selections=attacks&to=${currentTo}&key=${apiKey}`);
-                const batch = attackData.attacks || {};
-                const ids = Object.keys(batch);
-
-                if (ids.length === 0) break;
-
-                Object.assign(allAttacks, batch);
-
-                let oldest = currentTo;
-                ids.forEach(id => {
-                    const ts = batch[id].timestamp_ended || batch[id].timestamp_started || batch[id].timestamp;
-                    if (ts < oldest) oldest = ts;
-                });
-
-                if (oldest <= startTime || oldest === currentTo) break;
-                currentTo = oldest - 1;
-                await new Promise(r => setTimeout(r, 200));
+                    if (ourFactionReport && ourFactionReport.members) {
+                        foundReport = true;
+                        Object.entries(ourFactionReport.members).forEach(([mId, mData]) => {
+                            const name = mData.name;
+                            if (!stats[name]) {
+                                stats[name] = { id: mId, name: name, warHits: 0, chainHits: 0, retals: 0, assists: 0, respect: 0 };
+                            }
+                            stats[name].warHits += (parseInt(mData.attacks, 10) || 0);
+                            stats[name].respect += (parseFloat(mData.score) || 0);
+                        });
+                    }
+                } catch (e) {
+                    console.warn(`Could not load war report ${warId}:`, e);
+                }
             }
 
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Processing and classifying API attack records...</p>`;
-            const validOutcomes = ["Hospitalized", "Mugged", "Left", "Arrested", "Special"];
+            if (!foundReport) {
+                resultsEl.innerHTML = `<p style="color:#ff9800;">⚠️ No ranked war report found. Checking recent chain reports...</p>`;
+            }
 
-            Object.values(allAttacks).forEach(atk => {
-                const ts = atk.timestamp_ended || atk.timestamp_started || atk.timestamp;
-                if (ts < startTime || ts > scanTo) return;
+            // Fetch recent chains
+            resultsEl.innerHTML = `<p style="color:#ffca28;>Fetching recent chain reports...</p>`;
+            const chainList = await apiGet(`https://api.torn.com/faction/${myFactionId}?selections=chains&key=${apiKey}`);
+            const chains = chainList.chains || {};
+            const recentChainIds = Object.keys(chains).slice(-5); // Check last 5 chains
 
-                const attackerId = String(atk.attacker_id || '');
-                const attackerName = members[attackerId] ? members[attackerId].name : atk.attacker_name;
-                if (!attackerName) return;
+            for (const chainId of recentChainIds) {
+                try {
+                    const cData = await apiGet(`https://api.torn.com/torn/${chainId}?selections=chainreport&key=${apiKey}`);
+                    const cMembers = cData.chainreport?.members || {};
 
-                if (!stats[attackerName]) {
-                    stats[attackerName] = { id: attackerId, name: attackerName, warHits: 0, chainHits: 0, nonWarHits: 0, retals: 0, assists: 0, respect: 0 };
+                    Object.entries(cMembers).forEach(([mId, mData]) => {
+                        const name = mData.name;
+                        if (!stats[name]) {
+                            stats[name] = { id: mId, name: name, warHits: 0, chainHits: 0, retals: 0, assists: 0, respect: 0 };
+                        }
+                        stats[name].chainHits += (parseInt(mData.attacks, 10) || 0);
+                        stats[name].retals += (parseInt(mData.retaliations, 10) || 0);
+                        stats[name].assists += (parseInt(mData.assists, 10) || 0);
+                    });
+                } catch (e) {
+                    console.warn(`Could not load chain report ${chainId}:`, e);
                 }
-
-                if (atk.result === "Assist" || atk.modifiers?.assist > 1) {
-                    stats[attackerName].assists++;
-                    return;
-                }
-
-                if (!validOutcomes.includes(atk.result)) return;
-
-                const respectGain = parseFloat(atk.respect_gain || atk.respect || 0);
-                stats[attackerName].respect += respectGain;
-
-                const isRetal = (atk.modifiers && parseFloat(atk.modifiers.retaliation) > 1) || atk.retaliation === 1;
-                if (isRetal) stats[attackerName].retals++;
-
-                const isWar = (atk.ranked_war === 1) || (atk.modifiers && parseFloat(atk.modifiers.war) > 1) || (atk.chain === 0 && respectGain >= 0.5);
-                const isChain = (atk.chain && atk.chain > 0) || (atk.modifiers && parseFloat(atk.modifiers.chain) > 1);
-
-                if (isWar) {
-                    stats[attackerName].warHits++;
-                } else if (isChain) {
-                    stats[attackerName].chainHits++;
-                } else {
-                    stats[attackerName].nonWarHits++;
-                }
-            });
+            }
 
             compiledMemberStats = stats;
             renderPayslips();
@@ -349,32 +312,30 @@
         const pool = parseFloat(GM_getValue('wp_pool', '1000000000')) || 0;
         const rateWar = parseFloat(GM_getValue('wp_war_hit', '1000000')) || 0;
         const rateChain = parseFloat(GM_getValue('wp_chain_hit', '120000')) || 0;
-        const rateNonWar = parseFloat(GM_getValue('wp_non_war_hit', '50000')) || 0;
         const rateRetal = parseFloat(GM_getValue('wp_retal', '10000')) || 0;
         const rateAssist = parseFloat(GM_getValue('wp_assist', '25000')) || 0;
         const rateRespect = parseFloat(GM_getValue('wp_respect_rate', '0')) || 0;
         const splitRemainder = GM_getValue('wp_split_remainder', true);
 
         const activeMembers = Object.values(compiledMemberStats).filter(m =>
-            m.warHits > 0 || m.chainHits > 0 || m.nonWarHits > 0 || m.retals > 0 || m.assists > 0 || m.respect > 0
+            m.warHits > 0 || m.chainHits > 0 || m.retals > 0 || m.assists > 0 || m.respect > 0
         );
 
         if (activeMembers.length === 0) {
-            resultsEl.innerHTML = `<p style="color:#aaa;">No qualifying attacks found in the selected time window.</p>`;
+            resultsEl.innerHTML = `<p style="color:#aaa;">No war or chain hits recorded in reports.</p>`;
             exportBtn.style.display = 'none';
             return;
         }
 
         exportBtn.style.display = 'inline-block';
 
-        let totalFactionRespect = 0;
+        let totalFactionScore = 0;
         let totalBasePay = 0;
 
         activeMembers.forEach(m => {
-            totalFactionRespect += m.respect;
+            totalFactionScore += m.respect;
             m.basePay = (m.warHits * rateWar) +
                         (m.chainHits * rateChain) +
-                        (m.nonWarHits * rateNonWar) +
                         (m.retals * rateRetal) +
                         (m.assists * rateAssist) +
                         (m.respect * rateRespect);
@@ -382,13 +343,13 @@
         });
 
         const remainderPool = Math.max(0, pool - totalBasePay);
-        const perRespectBonus = (splitRemainder && totalFactionRespect > 0 && remainderPool > 0)
-            ? (remainderPool / totalFactionRespect)
+        const perScoreBonus = (splitRemainder && totalFactionScore > 0 && remainderPool > 0)
+            ? (remainderPool / totalFactionScore)
             : 0;
 
         activeMembers.forEach(m => {
-            m.respectBonus = m.respect * perRespectBonus;
-            m.finalPay = m.basePay + m.respectBonus;
+            m.scoreBonus = m.respect * perScoreBonus;
+            m.finalPay = m.basePay + m.scoreBonus;
         });
 
         activeMembers.sort((a, b) => b.finalPay - a.finalPay);
@@ -398,7 +359,7 @@
             <div class="wp-summary-bar">
                 <div><strong>Reward Pool:</strong> ${formatMoney(pool)}</div>
                 <div><strong>Direct Hit/Bonus Pay:</strong> ${formatMoney(totalBasePay)}</div>
-                <div><strong>Respect Pool Split:</strong> ${formatMoney(splitRemainder ? remainderPool : 0)} (${formatMoney(perRespectBonus)}/resp)</div>
+                <div><strong>War Score Pool Split:</strong> ${formatMoney(splitRemainder ? remainderPool : 0)} (${formatMoney(perScoreBonus)}/score)</div>
                 <div style="color:#4caf50;"><strong>Total Payout:</strong> ${formatMoney(totalDistributed)}</div>
             </div>
             <table class="war-payout-table">
@@ -407,10 +368,9 @@
                         <th style="text-align:left;">Member</th>
                         <th>War Hits</th>
                         <th>Chain Hits</th>
-                        <th>Non-War</th>
                         <th>Retals</th>
                         <th>Assists</th>
-                        <th>Respect</th>
+                        <th>War Score</th>
                         <th style="color:#ffca28;">Total Paycheck</th>
                         <th style="text-align:left;">Payslip Calculation Breakdown</th>
                     </tr>
@@ -422,11 +382,10 @@
             const parts = [];
             if (m.warHits > 0 && rateWar > 0) parts.push(`${m.warHits} War (${formatMoney(m.warHits * rateWar)})`);
             if (m.chainHits > 0 && rateChain > 0) parts.push(`${m.chainHits} Chain (${formatMoney(m.chainHits * rateChain)})`);
-            if (m.nonWarHits > 0 && rateNonWar > 0) parts.push(`${m.nonWarHits} Outside (${formatMoney(m.nonWarHits * rateNonWar)})`);
             if (m.retals > 0 && rateRetal > 0) parts.push(`${m.retals} Retal (${formatMoney(m.retals * rateRetal)})`);
             if (m.assists > 0 && rateAssist > 0) parts.push(`${m.assists} Assist (${formatMoney(m.assists * rateAssist)})`);
-            if (m.respect > 0 && rateRespect > 0) parts.push(`${m.respect.toFixed(1)} Resp (${formatMoney(m.respect * rateRespect)})`);
-            if (m.respectBonus > 0) parts.push(`Pool Share (${formatMoney(m.respectBonus)})`);
+            if (m.respect > 0 && rateRespect > 0) parts.push(`${m.respect.toFixed(2)} Score (${formatMoney(m.respect * rateRespect)})`);
+            if (m.scoreBonus > 0) parts.push(`Pool Share (${formatMoney(m.scoreBonus)})`);
 
             const explanation = parts.length > 0 ? parts.join(' + ') : 'No payable actions';
 
@@ -435,7 +394,6 @@
                     <td><strong>${m.name}</strong></td>
                     <td>${m.warHits}</td>
                     <td>${m.chainHits}</td>
-                    <td>${m.nonWarHits}</td>
                     <td>${m.retals}</td>
                     <td>${m.assists}</td>
                     <td>${m.respect.toFixed(2)}</td>
@@ -453,9 +411,9 @@
         const activeMembers = Object.values(compiledMemberStats).filter(m => m.finalPay !== undefined);
         if (activeMembers.length === 0) return;
 
-        let csv = "Member,War Hits,Chain Hits,Non-War Hits,Retals,Assists,Respect Gained,Base Pay,Respect Bonus,Total Paycheck\n";
+        let csv = "Member,War Hits,Chain Hits,Retals,Assists,War Score,Base Pay,Score Bonus,Total Paycheck\n";
         activeMembers.sort((a, b) => b.finalPay - a.finalPay).forEach(m => {
-            csv += `"${m.name}",${m.warHits},${m.chainHits},${m.nonWarHits},${m.retals},${m.assists},${m.respect.toFixed(2)},${Math.round(m.basePay)},${Math.round(m.respectBonus)},${Math.round(m.finalPay)}\n`;
+            csv += `"${m.name}",${m.warHits},${m.chainHits},${m.retals},${m.assists},${m.respect.toFixed(2)},${Math.round(m.basePay)},${Math.round(m.scoreBonus)},${Math.round(m.finalPay)}\n`;
         });
 
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
