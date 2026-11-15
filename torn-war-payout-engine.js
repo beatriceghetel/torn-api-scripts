@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn War & Chain Payout Engine (Flexible Pools & Retal Fix)
 // @namespace    http://tampermonkey.net/
-// @version      9.3.0
+// @version      3.1.0
 // @description  Automated faction payout calculator with flexible pool distribution modes and fixed retal/assist parsing.
 // @author       beatrice
 // @license      MIT
