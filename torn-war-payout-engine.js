@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn War & Chain Payout Engine (Clean Public API)
+// @name         Torn War & Chain Payout Engine (Demo / Dummy Mode)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.1
-// @description  Calculates war and chain payslips using clean public faction endpoints without faction ID constraints.
+// @version      1.2.0
+// @description  Faction war & chain payout calculator with a built-in demo mode for testing without API permissions.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -17,7 +17,7 @@
 
     const styles = `
         .war-payout-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
-        .war-payout-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; }
+        .war-payout-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
         .war-payout-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
         .war-payout-table th, .war-payout-table td { border: 1px solid #444; padding: 8px; text-align: center; }
         .war-payout-table th { background-color: #333; color: #aaa; font-size: 12px; }
@@ -27,6 +27,8 @@
 
         .wp-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 5px; }
         .wp-btn:hover { background: #45a049; }
+        .wp-btn.demo { background: #9c27b0; color: white; }
+        .wp-btn.demo:hover { background: #7b1fa2; }
         .wp-btn.secondary { background: #444; color: #ccc; }
         .wp-btn.secondary:hover { background: #555; color: #fff; }
         .wp-btn.config { background: #ff9800; color: #111; }
@@ -46,26 +48,6 @@
     document.head.appendChild(styleSheet);
 
     let compiledMemberStats = {};
-    let factionMembers = {};
-
-    function apiGet(url) {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: "GET",
-                url: url,
-                onload: res => {
-                    try {
-                        const data = JSON.parse(res.responseText);
-                        if (data.error) reject(data.error.error);
-                        else resolve(data);
-                    } catch (e) {
-                        reject("Invalid JSON response from Torn API.");
-                    }
-                },
-                onerror: () => reject("Network error contacting Torn API.")
-            });
-        });
-    }
 
     function injectDashboard() {
         if (document.getElementById('war-payout-dashboard')) return;
@@ -90,9 +72,9 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ Faction War & Chain Payout Engine (Clean Public API)</span>
+                <span>⚔️ Faction War & Chain Payout Engine</span>
                 <div>
-                    <button id="wp-run-btn" class="wp-btn">Scan War & Chains</button>
+                    <button id="wp-demo-btn" class="wp-btn demo">🧪 Load Demo Data</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
                     <button id="wp-toggle-dates-btn" class="wp-btn secondary">📅 War Window</button>
                     <button id="wp-toggle-settings-btn" class="wp-btn secondary">⚙️ API Key</button>
@@ -139,14 +121,14 @@
 
             <!-- Date Window Panel -->
             <div id="wp-dates-panel" class="wp-panel">
-                <p style="font-size:12px; color:#aaa; margin-top:0;">Filter which Ranked Wars and Chain Reports fall inside your war timeframe (defaults to last 4 days if blank):</p>
+                <p style="font-size:12px; color:#aaa; margin-top:0;">Filter timeframe:</p>
                 <div class="wp-grid" style="max-width: 500px; margin-bottom: 0;">
                     <div class="wp-field">
-                        <label>Window Start (Local Time):</label>
+                        <label>Window Start:</label>
                         <input type="datetime-local" id="wp-start-date" class="wp-input">
                     </div>
                     <div class="wp-field">
-                        <label>Window End (Local Time):</label>
+                        <label>Window End:</label>
                         <input type="datetime-local" id="wp-end-date" class="wp-input">
                     </div>
                 </div>
@@ -154,18 +136,16 @@
 
             <!-- API Settings Panel -->
             <div id="wp-settings-panel" class="wp-panel">
-                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter any standard <b>Public</b> or <b>Limited</b> Torn API Key:</p>
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter Torn API Key (optional if using Demo Mode):</p>
                 <div style="display:flex; gap:8px; max-width: 450px;">
-                    <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste Torn API Key...">
+                    <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste API Key...">
                     <button id="wp-save-key-btn" class="wp-btn">Save</button>
                 </div>
                 <div id="wp-key-status" style="margin-top: 6px; font-size: 12px;"></div>
             </div>
 
             <div id="wp-results">
-                ${savedKey ? 
-                  '<p style="color: #aaa; font-size:12px;">Set your dates in <b>📅 War Window</b>, configure rates in <b>💰 Payout Rates</b>, and click <b>Scan War & Chains</b>.</p>' : 
-                  '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ API Key</b> above to configure it.</p>'}
+                <p style="color: #ffca28; font-size:12px;">💡 Click <b>🧪 Load Demo Data</b> above to test out the payout calculations and payslip generator instantly without needing API permissions!</p>
             </div>
         `;
 
@@ -209,261 +189,10 @@
             if (Object.keys(compiledMemberStats).length > 0) renderPayslips();
         });
 
-        document.getElementById('wp-run-btn').addEventListener('click', () => {
-            const apiKey = GM_getValue('wp_torn_api_key', '');
-            if (!apiKey) {
-                alert('Please save your Torn API key first.');
-                togglePanel('settings');
-                return;
-            }
-            runPublicScan(apiKey);
-        });
-
-        document.getElementById('wp-export-btn').addEventListener('click', exportPayslipsCSV);
+        document.getElementById('wp-demo-btn').addEventListener('click', loadDemoData);
     }
 
-    async function runPublicScan(apiKey) {
-        const resultsEl = document.getElementById('wp-results');
-        document.getElementById('wp-export-btn').style.display = 'none';
-
-        const now = Math.floor(Date.now() / 1000);
-        const startVal = document.getElementById('wp-start-date').value;
-        const endVal = document.getElementById('wp-end-date').value;
-
-        const startTime = startVal ? Math.floor(new Date(startVal).getTime() / 1000) : (now - (4 * 24 * 60 * 60));
-        const endTime = endVal ? Math.floor(new Date(endVal).getTime() / 1000) : now;
-
-        try {
-            // 1. Fetch faction basic info implicitly tied to the key owner
-            resultsEl.innerHTML = `<p style="color:#ffca28;>Fetching faction roster...</p>`;
-            const basicData = await apiGet(`https://api.torn.com/faction/?selections=basic&key=${apiKey}`);
-            factionMembers = basicData.members || {};
-
-            const stats = {};
-            const ensureMember = (id, fallbackName) => {
-                const sid = String(id);
-                const name = factionMembers[sid] ? factionMembers[sid].name : (fallbackName || `Player [${sid}]`);
-                if (!stats[sid]) {
-                    stats[sid] = {
-                        id: sid,
-                        name: name,
-                        warHits: 0,
-                        chainHits: 0,
-                        retals: 0,
-                        assists: 0,
-                        respect: 0
-                    };
-                }
-                return stats[sid];
-            };
-
-            Object.entries(factionMembers).forEach(([id, info]) => ensureMember(id, info.name));
-
-            // 2. Fetch Ranked Wars list (Implicit faction route)
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Checking Ranked Wars...</p>`;
-            const rwData = await apiGet(`https://api.torn.com/faction/?selections=rankedwars&key=${apiKey}`);
-            const rankedWars = rwData.rankedwars || {};
-
-            for (const [warId, warInfo] of Object.entries(rankedWars)) {
-                const warStart = warInfo.war?.start || 0;
-                const warEnd = warInfo.war?.end || now;
-
-                if (warEnd >= startTime && warStart <= endTime) {
-                    resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Ranked War Report #${warId}...</p>`;
-                    const reportData = await apiGet(`https://api.torn.com/torn/${warId}?selections=rankedwarreport&key=${apiKey}`);
-                    
-                    // Find our faction data inside the global ranked war report
-                    const factionsInReport = reportData.rankedwarreport?.factions || {};
-                    let ourFactionReport = null;
-                    
-                    for (const fId of Object.keys(factionsInReport)) {
-                        // Check if this entry corresponds to our faction members
-                        const membersObj = factionsInReport[fId].members || {};
-                        const sampleMemberId = Object.keys(membersObj)[0];
-                        if (sampleMemberId && factionMembers[sampleMemberId]) {
-                            ourFactionReport = factionsInReport[fId];
-                            break;
-                        }
-                    }
-
-                    if (ourFactionReport && ourFactionReport.members) {
-                        Object.entries(ourFactionReport.members).forEach(([mId, mStats]) => {
-                            const rec = ensureMember(mId, mStats.name);
-                            rec.warHits += (parseInt(mStats.attacks, 10) || 0);
-                        });
-                    }
-                }
-            }
-
-            // 3. Fetch Chains list (Implicit faction route)
-            resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Chains list...</p>`;
-            const chainsData = await apiGet(`https://api.torn.com/faction/?selections=chains&key=${apiKey}`);
-            const chains = chainsData.chains || {};
-
-            const matchingChainIds = Object.entries(chains)
-                .filter(([_, c]) => (c.end || now) >= startTime && (c.start || 0) <= endTime)
-                .map(([id, _]) => id);
-
-            for (let i = 0; i < matchingChainIds.length; i++) {
-                const chainId = matchingChainIds[i];
-                resultsEl.innerHTML = `<p style="color:#ffca28;">Reading Chain Report #${chainId} (${i + 1}/${matchingChainIds.length})...</p>`;
-
-                const cReportData = await apiGet(`https://api.torn.com/torn/${chainId}?selections=chainreport&key=${apiKey}`);
-                const membersReport = cReportData.chainreport?.members || {};
-
-                Object.entries(membersReport).forEach(([mId, mStats]) => {
-                    const rec = ensureMember(mId, null);
-                    const totalChainAttacks = parseInt(mStats.attacks, 10) || 0;
-                    const chainWarHits = parseInt(mStats.war, 10) || 0;
-                    const chainRetals = parseInt(mStats.retaliations, 10) || 0;
-                    const chainAssists = parseInt(mStats.assists, 10) || 0;
-                    const chainRespect = parseFloat(mStats.respect) || 0;
-
-                    const pureChainHits = Math.max(0, totalChainAttacks - chainWarHits);
-
-                    rec.chainHits += pureChainHits;
-                    rec.retals += chainRetals;
-                    rec.assists += chainAssists;
-                    rec.respect += chainRespect;
-                });
-
-                await new Promise(r => setTimeout(r, 250));
-            }
-
-            compiledMemberStats = stats;
-            renderPayslips();
-
-        } catch (err) {
-            resultsEl.innerHTML = `<p style="color:#f44336;">API Error: ${err}</p>`;
-        }
-    }
-
-    function formatMoney(num) {
-        return '$' + Math.round(num).toLocaleString();
-    }
-
-    function renderPayslips() {
-        const resultsEl = document.getElementById('wp-results');
-        const exportBtn = document.getElementById('wp-export-btn');
-
-        const pool = parseFloat(GM_getValue('wp_pool', '1000000000')) || 0;
-        const rateWar = parseFloat(GM_getValue('wp_war_hit', '1000000')) || 0;
-        const rateChain = parseFloat(GM_getValue('wp_chain_hit', '120000')) || 0;
-        const rateRetal = parseFloat(GM_getValue('wp_retal', '10000')) || 0;
-        const rateAssist = parseFloat(GM_getValue('wp_assist', '25000')) || 0;
-        const rateRespect = parseFloat(GM_getValue('wp_respect_rate', '0')) || 0;
-        const splitRemainder = GM_getValue('wp_split_remainder', true);
-
-        const activeMembers = Object.values(compiledMemberStats).filter(m =>
-            m.warHits > 0 || m.chainHits > 0 || m.retals > 0 || m.assists > 0 || m.respect > 0
-        );
-
-        if (activeMembers.length === 0) {
-            resultsEl.innerHTML = `<p style="color:#aaa;">No ranked war or chain reports found inside the selected date window.</p>`;
-            exportBtn.style.display = 'none';
-            return;
-        }
-
-        exportBtn.style.display = 'inline-block';
-
-        let totalFactionRespect = 0;
-        let totalBasePay = 0;
-
-        activeMembers.forEach(m => {
-            totalFactionRespect += m.respect;
-            m.basePay = (m.warHits * rateWar) +
-                        (m.chainHits * rateChain) +
-                        (m.retals * rateRetal) +
-                        (m.assists * rateAssist) +
-                        (m.respect * rateRespect);
-            totalBasePay += m.basePay;
-        });
-
-        const remainderPool = Math.max(0, pool - totalBasePay);
-        const perRespectBonus = (splitRemainder && totalFactionRespect > 0 && remainderPool > 0)
-            ? (remainderPool / totalFactionRespect)
-            : 0;
-
-        activeMembers.forEach(m => {
-            m.respectBonus = m.respect * perRespectBonus;
-            m.finalPay = m.basePay + m.respectBonus;
-        });
-
-        activeMembers.sort((a, b) => b.finalPay - a.finalPay);
-        const totalDistributed = activeMembers.reduce((sum, m) => sum + m.finalPay, 0);
-
-        let html = `
-            <div class="wp-summary-bar">
-                <div><strong>Reward Pool:</strong> ${formatMoney(pool)}</div>
-                <div><strong>Direct Hit/Bonus Pay:</strong> ${formatMoney(totalBasePay)}</div>
-                <div><strong>Respect Pool Split:</strong> ${formatMoney(splitRemainder ? remainderPool : 0)} (${formatMoney(perRespectBonus)}/resp)</div>
-                <div style="color:#4caf50;"><strong>Total Payout:</strong> ${formatMoney(totalDistributed)}</div>
-            </div>
-            <table class="war-payout-table">
-                <thead>
-                    <tr>
-                        <th style="text-align:left;">Member</th>
-                        <th>War Hits</th>
-                        <th>Chain Hits</th>
-                        <th>Retals</th>
-                        <th>Assists</th>
-                        <th>Respect</th>
-                        <th style="color:#ffca28;">Total Paycheck</th>
-                        <th style="text-align:left;">Payslip Calculation Breakdown</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-
-        activeMembers.forEach(m => {
-            const parts = [];
-            if (m.warHits > 0 && rateWar > 0) parts.push(`${m.warHits} War (${formatMoney(m.warHits * rateWar)})`);
-            if (m.chainHits > 0 && rateChain > 0) parts.push(`${m.chainHits} Chain (${formatMoney(m.chainHits * rateChain)})`);
-            if (m.retals > 0 && rateRetal > 0) parts.push(`${m.retals} Retal (${formatMoney(m.retals * rateRetal)})`);
-            if (m.assists > 0 && rateAssist > 0) parts.push(`${m.assists} Assist (${formatMoney(m.assists * rateAssist)})`);
-            if (m.respect > 0 && rateRespect > 0) parts.push(`${m.respect.toFixed(1)} Resp (${formatMoney(m.respect * rateRespect)})`);
-            if (m.respectBonus > 0) parts.push(`Pool Share (${formatMoney(m.respectBonus)})`);
-
-            const explanation = parts.length > 0 ? parts.join(' + ') : 'No payable actions';
-
-            html += `
-                <tr>
-                    <td><strong>${m.name}</strong></td>
-                    <td>${m.warHits}</td>
-                    <td>${m.chainHits}</td>
-                    <td>${m.retals}</td>
-                    <td>${m.assists}</td>
-                    <td>${m.respect.toFixed(2)}</td>
-                    <td style="color:#4caf50 !important; font-weight:bold;">${formatMoney(m.finalPay)}</td>
-                    <td style="font-size:11px; color:#ccc !important;">${explanation}</td>
-                </tr>
-            `;
-        });
-
-        html += `</tbody></table>`;
-        resultsEl.innerHTML = html;
-    }
-
-    function exportPayslipsCSV() {
-        const activeMembers = Object.values(compiledMemberStats).filter(m => m.finalPay !== undefined);
-        if (activeMembers.length === 0) return;
-
-        let csv = "Member,War Hits,Chain Hits,Retals,Assists,Respect Gained,Base Pay,Respect Bonus,Total Paycheck\n";
-        activeMembers.sort((a, b) => b.finalPay - a.finalPay).forEach(m => {
-            csv += `"${m.name}",${m.warHits},${m.chainHits},${m.retals},${m.assists},${m.respect.toFixed(2)},${Math.round(m.basePay)},${Math.round(m.respectBonus)},${Math.round(m.finalPay)}\n`;
-        });
-
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `War_Payslips_${new Date().toISOString().slice(0,10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-
-    const observer = new MutationObserver(() => injectDashboard());
-    observer.observe(document.body, { childList: true, subtree: true });
-    injectDashboard();
-})();
+    function loadDemoData() {
+        // Mock sample data simulating a faction war & mini-chain
+        compiledMemberStats = {
+            "1": { name: "Viper [1024]", warHits: 85, chainHits: 42, retals: 12, assists: 19, respect: 345.6 },
