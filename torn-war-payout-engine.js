@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Faction-Filtered War & Chain Payout Engine
 // @namespace    http://tampermonkey.net/
-// @version      3.0.4
-// @description  Pulls exact Ranked War & Chain reports by ID, strictly filtering and paying only members of your own faction.
+// @version      3.0.5
+// @description  Accurate faction war and chain payout engine with correct API key mappings for retals and assists.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -145,7 +145,7 @@
                 <div style="flex: 2; min-width: 240px;">
                     <label style="font-size:11px; color:#aaa; display:block; margin-bottom:3px;">Chain IDs (comma-separated):</label>
                     <div style="display:flex; gap:5px;">
-                        <input type="text" id="wp-chain-ids" class="wp-input" value="${savedChainIds}" placeholder="e.g. 4189201, 4189450">
+                        <input type="text" id="wp-chain-ids" class="wp-input" value="${savedChainIds}" placeholder="e.g. 73450376, 73494566">
                         <button id="wp-auto-chains-btn" class="wp-btn secondary" style="white-space:nowrap; margin:0;" title="Fetch recent Chain IDs">Auto-Find</button>
                         <button id="wp-clear-chains-btn" class="wp-btn secondary" style="white-space:nowrap; margin:0;" title="Clear">Clear</button>
                     </div>
@@ -205,7 +205,7 @@
 
             <div id="wp-results">
                 ${savedKey ? 
-                  '<p style="color: #aaa; font-size:12px;">Enter your War ID and/or Chain IDs above, then click <b>🚀 Calculate Payslips</b>.</p>' : 
+                  '<p style="color: #aaa; font-size:12px;">Enter your War ID and Chain IDs above, then click <b>🚀 Calculate Payslips</b>.</p>' : 
                   '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ API Key</b> above to set it up.</p>'}
             </div>
         `;
@@ -307,7 +307,6 @@
         document.getElementById('wp-export-btn').style.display = 'none';
 
         try {
-            // 1. Get User Profile & Faction ID
             resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching your faction roster...</p>`;
             const profile = await apiGet(`https://api.torn.com/user/?selections=profile&key=${apiKey}`);
             const myFactionId = String(profile.faction?.faction_id || '');
@@ -317,14 +316,12 @@
                 return;
             }
 
-            // 2. Fetch official Roster of YOUR faction to build an explicit white-list of member IDs
             const basicData = await apiGet(`https://api.torn.com/faction/${myFactionId}?selections=basic&key=${apiKey}`);
             const factionMembers = basicData.members || {};
             
             const validMemberIds = new Set(Object.keys(factionMembers));
             const stats = {};
 
-            // Initialize stats strictly for your faction's current roster
             Object.entries(factionMembers).forEach(([id, info]) => {
                 stats[String(id)] = {
                     id: String(id),
@@ -341,7 +338,6 @@
             let warStart = 0;
             let warEnd = 0;
 
-            // 3. Fetch Ranked War Report
             if (rankId) {
                 resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Ranked War Report #${rankId}...</p>`;
                 const rwData = await apiGet(`https://api.torn.com/torn/${rankId}?selections=rankedwarreport&key=${apiKey}`);
@@ -355,7 +351,6 @@
                 warStart = report.war?.start || 0;
                 warEnd = report.war?.end || 0;
 
-                // Only parse members belonging to your faction
                 Object.entries(report.factions[myFactionId].members || {}).forEach(([mId, mData]) => {
                     const sid = String(mId);
                     if (validMemberIds.has(sid)) {
@@ -368,7 +363,6 @@
                 });
             }
 
-            // 4. Fetch Chain Reports (Strictly filtering out enemy/non-faction members)
             for (let i = 0; i < chainIds.length; i++) {
                 const cId = chainIds[i];
                 resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching Chain Report #${cId} (${i + 1}/${chainIds.length})...</p>`;
@@ -383,7 +377,6 @@
 
                 Object.entries(cReport.members).forEach(([mId, mStats]) => {
                     const sid = String(mId);
-                    // EXCLUDE enemy faction members entirely
                     if (!validMemberIds.has(sid)) return;
 
                     if (!stats[sid]) {
@@ -392,8 +385,10 @@
 
                     const totalChainAtks = parseInt(mStats.attacks, 10) || 0;
                     const chainWarAtks = parseInt(mStats.war, 10) || 0;
-                    const retals = parseInt(mStats.retaliations, 10) || 0;
-                    const assists = parseInt(mStats.assists, 10) || 0;
+                    
+                    // FIX: Chainreport API keys are 'retaliation' and 'assist' (singular)
+                    const retals = parseInt(mStats.retaliation, 10) || parseInt(mStats.retaliations, 10) || 0;
+                    const assists = parseInt(mStats.assist, 10) || parseInt(mStats.assists, 10) || 0;
                     const respect = parseFloat(mStats.respect) || 0;
 
                     const pureChainHits = rankId ? Math.max(0, totalChainAtks - chainWarAtks) : totalChainAtks;
@@ -433,7 +428,6 @@
         const rateRespect = parseFloat(GM_getValue('wp_respect_rate', '0')) || 0;
         const splitBasis = GM_getValue('wp_split_basis', 'score');
 
-        // Only include members from YOUR faction who had activity
         const activeMembers = Object.values(compiledMemberStats).filter(m =>
             m.warHits > 0 || m.warScore > 0 || m.chainHits > 0 || m.retals > 0 || m.assists > 0 || m.respect > 0
         );
