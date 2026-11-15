@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Torn War & Chain Payout Engine (Demo / Dummy Mode)
+// @name         Torn Faction Full War & Payout Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
-// @description  Faction war & chain payout calculator with a built-in demo mode for testing without API permissions.
+// @version      2.0.0
+// @description  Deep-paginating faction war, chain, retal, and assist tracker with automated payout calculations and CSV export.
 // @author       beatrice
 // @license      MIT
 // @match        https://www.torn.com/factions.php*
@@ -14,6 +14,8 @@
 
 (function() {
     'use strict';
+
+    const MAX_CHUNKS = 60; // Up to 6,000 attacks deep scan
 
     const styles = `
         .war-payout-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
@@ -27,8 +29,8 @@
 
         .wp-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 5px; }
         .wp-btn:hover { background: #45a049; }
-        .wp-btn.demo { background: #9c27b0; color: white; }
-        .wp-btn.demo:hover { background: #7b1fa2; }
+        .wp-btn.scan { background: #2196f3; color: white; }
+        .wp-btn.scan:hover { background: #1976d2; }
         .wp-btn.secondary { background: #444; color: #ccc; }
         .wp-btn.secondary:hover { background: #555; color: #fff; }
         .wp-btn.config { background: #ff9800; color: #111; }
@@ -64,6 +66,7 @@
             pool: GM_getValue('wp_pool', '1000000000'),
             warHit: GM_getValue('wp_war_hit', '1000000'),
             chainHit: GM_getValue('wp_chain_hit', '120000'),
+            nonWarHit: GM_getValue('wp_non_war_hit', '50000'),
             retal: GM_getValue('wp_retal', '10000'),
             assist: GM_getValue('wp_assist', '25000'),
             respectRate: GM_getValue('wp_respect_rate', '0'),
@@ -72,9 +75,9 @@
 
         dashboard.innerHTML = `
             <div class="war-payout-title">
-                <span>⚔️ Faction War & Chain Payout Engine</span>
+                <span>⚔️ Faction Full War & Payout Engine</span>
                 <div>
-                    <button id="wp-demo-btn" class="wp-btn demo">🧪 Load Demo Data</button>
+                    <button id="wp-run-btn" class="wp-btn scan">🚀 Run Deep Attack Scan</button>
                     <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
                     <button id="wp-toggle-dates-btn" class="wp-btn secondary">📅 War Window</button>
                     <button id="wp-toggle-settings-btn" class="wp-btn secondary">⚙️ API Key</button>
@@ -96,6 +99,10 @@
                     <div class="wp-field">
                         <label>Chain Hit Pay ($):</label>
                         <input type="number" id="wp-chain-hit" class="wp-input" value="${cfg.chainHit}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Non-War / Outside Hit ($):</label>
+                        <input type="number" id="wp-non-war-hit" class="wp-input" value="${cfg.nonWarHit}">
                     </div>
                     <div class="wp-field">
                         <label>Retaliation Bonus ($):</label>
@@ -121,7 +128,7 @@
 
             <!-- Date Window Panel -->
             <div id="wp-dates-panel" class="wp-panel">
-                <p style="font-size:12px; color:#aaa; margin-top:0;">Filter timeframe:</p>
+                <p style="font-size:12px; color:#aaa; margin-top:0;">Set start and end time for the war scan (defaults to past 7 days if blank):</p>
                 <div class="wp-grid" style="max-width: 500px; margin-bottom: 0;">
                     <div class="wp-field">
                         <label>Window Start:</label>
@@ -136,7 +143,7 @@
 
             <!-- API Settings Panel -->
             <div id="wp-settings-panel" class="wp-panel">
-                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter Torn API Key (optional if using Demo Mode):</p>
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter your Faction-Enabled API Key:</p>
                 <div style="display:flex; gap:8px; max-width: 450px;">
                     <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste API Key...">
                     <button id="wp-save-key-btn" class="wp-btn">Save</button>
@@ -145,7 +152,9 @@
             </div>
 
             <div id="wp-results">
-                <p style="color: #ffca28; font-size:12px;">💡 Click <b>🧪 Load Demo Data</b> above to test out the payout calculations and payslip generator instantly without needing API permissions!</p>
+                ${savedKey ? 
+                  '<p style="color: #aaa; font-size:12px;">Click <b>🚀 Run Deep Attack Scan</b> to pull all historical war hits, chains, retals, and assists directly from Torn!</p>' : 
+                  '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ API Key</b> above to configure it.</p>'}
             </div>
         `;
 
@@ -180,6 +189,7 @@
             GM_setValue('wp_pool', document.getElementById('wp-pool').value);
             GM_setValue('wp_war_hit', document.getElementById('wp-war-hit').value);
             GM_setValue('wp_chain_hit', document.getElementById('wp-chain-hit').value);
+            GM_setValue('wp_non_war_hit', document.getElementById('wp-non-war-hit').value);
             GM_setValue('wp_retal', document.getElementById('wp-retal').value);
             GM_setValue('wp_assist', document.getElementById('wp-assist').value);
             GM_setValue('wp_respect_rate', document.getElementById('wp-respect-rate').value);
@@ -189,10 +199,45 @@
             if (Object.keys(compiledMemberStats).length > 0) renderPayslips();
         });
 
-        document.getElementById('wp-demo-btn').addEventListener('click', loadDemoData);
+        document.getElementById('wp-run-btn').addEventListener('click', () => {
+            const apiKey = GM_getValue('wp_torn_api_key', '');
+            if (!apiKey) {
+                alert('Please save your Torn API key first.');
+                togglePanel('settings');
+                return;
+            }
+            startDeepAttackScan(apiKey);
+        });
+
+        document.getElementById('wp-export-btn').addEventListener('click', exportPayslipsCSV);
     }
 
-    function loadDemoData() {
-        // Mock sample data simulating a faction war & mini-chain
-        compiledMemberStats = {
-            "1": { name: "Viper [1024]", warHits: 85, chainHits: 42, retals: 12, assists: 19, respect: 345.6 },
+    function startDeepAttackScan(apiKey) {
+        const resultsEl = document.getElementById('wp-results');
+        document.getElementById('wp-export-btn').style.display = 'none';
+
+        const now = Math.floor(Date.now() / 1000);
+        const startVal = document.getElementById('wp-start-date').value;
+        const endVal = document.getElementById('wp-end-date').value;
+
+        const startTime = startVal ? Math.floor(new Date(startVal).getTime() / 1000) : (now - (7 * 24 * 60 * 60));
+        let scanTo = endVal ? Math.floor(new Date(endVal).getTime() / 1000) : now;
+        if (scanTo > now) scanTo = now;
+
+        resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching faction roster...</p>`;
+
+        // 1. Fetch Roster First
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://api.torn.com/faction/?selections=basic&key=${apiKey}`,
+            onload: function(res) {
+                try {
+                    const data = JSON.parse(res.responseText);
+                    if (data.error) {
+                        resultsEl.innerHTML = `<p style="color:#f44336;">API Error: ${data.error.error}</p>`;
+                        return;
+                    }
+                    const members = data.members || {};
+                    paginateAttacks(apiKey, startTime, scanTo, members);
+                } catch (e) {
+                    resultsEl.innerHTML
