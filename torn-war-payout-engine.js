@@ -1,0 +1,509 @@
+// ==UserScript==
+// @name         Torn War & Chain Payout Engine
+// @namespace    http://tampermonkey.net/
+// @version      1.0.0
+// @description  Standalone faction war, mini-chain, and hit tracker with automated payslip and bonus split calculator.
+// @author       beatrice
+// @license      MIT
+// @match        https://www.torn.com/factions.php*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @connect      api.torn.com
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const MAX_CHUNKS = 60; // Up to 6,000 attacks per scan
+
+    // --- Inject Styles ---
+    const styles = `
+        .war-payout-wrap { background: #222; color: #fff; padding: 15px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; font-family: Arial, sans-serif; }
+        .war-payout-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #ffca28; display: flex; justify-content: space-between; align-items: center; }
+        .war-payout-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        .war-payout-table th, .war-payout-table td { border: 1px solid #444; padding: 8px; text-align: center; }
+        .war-payout-table th { background-color: #333; color: #aaa; font-size: 12px; }
+        .war-payout-table td:first-child, .war-payout-table td:last-child { text-align: left; }
+        .war-payout-table tr:nth-child(even) { background-color: #2a2a2a; }
+        
+        .war-payout-table td strong, .war-payout-table td { color: #ffffff !important; }
+        
+        .wp-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 5px; }
+        .wp-btn:hover { background: #45a049; }
+        .wp-btn.secondary { background: #444; color: #ccc; }
+        .wp-btn.secondary:hover { background: #555; color: #fff; }
+        .wp-btn.config { background: #ff9800; color: #111; }
+        .wp-btn.config:hover { background: #e68900; }
+        .wp-btn.export { background: #007acc; }
+        .wp-btn.export:hover { background: #0062a3; }
+
+        .wp-panel { display: none; background: #1a1a1a; border: 1px solid #333; padding: 12px; margin-bottom: 15px; border-radius: 4px; }
+        .wp-input { padding: 6px; background: #111; border: 1px solid #444; color: #fff; border-radius: 3px; font-size: 12px; width: 100%; box-sizing: border-box; }
+        .wp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin-bottom: 12px; }
+        .wp-field { display: flex; flex-direction: column; font-size: 12px; color: #bbb; }
+        .wp-field label { margin-bottom: 4px; }
+        .wp-summary-bar { background: #181818; border: 1px solid #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 15px; justify-content: space-between; }
+    `;
+    const styleSheet = document.createElement("style");
+    styleSheet.innerText = styles;
+    document.head.appendChild(styleSheet);
+
+    let compiledMemberStats = {};
+    let currentFactionMembers = {};
+
+    function injectDashboard() {
+        if (document.getElementById('war-payout-dashboard')) return;
+
+        const target = document.querySelector('.content-wrapper');
+        if (!target) return;
+
+        const dashboard = document.createElement('div');
+        dashboard.id = 'war-payout-dashboard';
+        dashboard.className = 'war-payout-wrap';
+
+        const savedKey = GM_getValue('wp_torn_api_key', '');
+        const cfg = {
+            pool: GM_getValue('wp_pool', '1000000000'),
+            warHit: GM_getValue('wp_war_hit', '1000000'),
+            chainHit: GM_getValue('wp_chain_hit', '120000'),
+            nonWarHit: GM_getValue('wp_non_war_hit', '0'),
+            retal: GM_getValue('wp_retal', '10000'),
+            assist: GM_getValue('wp_assist', '25000'),
+            respectRate: GM_getValue('wp_respect_rate', '0'),
+            splitRemainder: GM_getValue('wp_split_remainder', true)
+        };
+
+        dashboard.innerHTML = `
+            <div class="war-payout-title">
+                <span>⚔️ Faction War & Chain Payout Engine</span>
+                <div>
+                    <button id="wp-run-btn" class="wp-btn">Scan War & Calculate</button>
+                    <button id="wp-toggle-payout-btn" class="wp-btn config">💰 Payout Rates</button>
+                    <button id="wp-toggle-dates-btn" class="wp-btn secondary">📅 War Window</button>
+                    <button id="wp-toggle-settings-btn" class="wp-btn secondary">⚙️ API Key</button>
+                    <button id="wp-export-btn" class="wp-btn export" style="display: none;">📥 Export Payslips</button>
+                </div>
+            </div>
+
+            <!-- Payout Config Panel -->
+            <div id="wp-payout-panel" class="wp-panel">
+                <div class="wp-grid">
+                    <div class="wp-field">
+                        <label>Total Reward Pool ($):</label>
+                        <input type="number" id="wp-pool" class="wp-input" value="${cfg.pool}">
+                    </div>
+                    <div class="wp-field">
+                        <label>War Hit Pay ($):</label>
+                        <input type="number" id="wp-war-hit" class="wp-input" value="${cfg.warHit}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Chain Hit Pay ($):</label>
+                        <input type="number" id="wp-chain-hit" class="wp-input" value="${cfg.chainHit}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Non-War / Outside Hit ($):</label>
+                        <input type="number" id="wp-non-war-hit" class="wp-input" value="${cfg.nonWarHit}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Retaliation Bonus ($):</label>
+                        <input type="number" id="wp-retal" class="wp-input" value="${cfg.retal}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Assist Bonus ($):</label>
+                        <input type="number" id="wp-assist" class="wp-input" value="${cfg.assist}">
+                    </div>
+                    <div class="wp-field">
+                        <label>Fixed $/Respect (Optional):</label>
+                        <input type="number" id="wp-respect-rate" class="wp-input" value="${cfg.respectRate}">
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <label style="font-size:12px; color:#ffca28; cursor:pointer;">
+                        <input type="checkbox" id="wp-split-remainder" ${cfg.splitRemainder ? 'checked' : ''}> 
+                        Auto-split remaining Reward Pool proportionally by <b>Respect Gained</b>
+                    </label>
+                    <button id="wp-recalc-btn" class="wp-btn">Save & Recalculate</button>
+                </div>
+            </div>
+
+            <!-- Date Window Panel -->
+            <div id="wp-dates-panel" class="wp-panel">
+                <p style="font-size:12px; color:#aaa; margin-top:0;">Set the start and end window for the war (leave blank to default to the last 4 days):</p>
+                <div class="wp-grid" style="max-width: 500px; margin-bottom: 0;">
+                    <div class="wp-field">
+                        <label>War Start (Local Time):</label>
+                        <input type="datetime-local" id="wp-start-date" class="wp-input">
+                    </div>
+                    <div class="wp-field">
+                        <label>War End (Local Time):</label>
+                        <input type="datetime-local" id="wp-end-date" class="wp-input">
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Settings Panel -->
+            <div id="wp-settings-panel" class="wp-panel">
+                <p style="font-size:12px; margin-top:0; margin-bottom:8px; color:#aaa;">Enter a Limited or Full Access API Key (requires Faction API access):</p>
+                <div style="display:flex; gap:8px; max-width: 450px;">
+                    <input type="password" id="wp-api-input" class="wp-input" value="${savedKey}" placeholder="Paste Torn API Key...">
+                    <button id="wp-save-key-btn" class="wp-btn">Save</button>
+                </div>
+                <div id="wp-key-status" style="margin-top: 6px; font-size: 12px;"></div>
+            </div>
+
+            <div id="wp-results">
+                ${savedKey ? 
+                  '<p style="color: #aaa; font-size:12px;">Configure your rates in <b>💰 Payout Rates</b>, set your dates in <b>📅 War Window</b>, and click <b>Scan War & Calculate</b>.</p>' : 
+                  '<p style="color: #ff9800; font-size:12px;">⚠️ API Key missing. Click <b>⚙️ API Key</b> above to configure it.</p>'}
+            </div>
+        `;
+
+        target.insertBefore(dashboard, target.firstChild);
+
+        const panels = {
+            payout: document.getElementById('wp-payout-panel'),
+            dates: document.getElementById('wp-dates-panel'),
+            settings: document.getElementById('wp-settings-panel')
+        };
+
+        function togglePanel(activeKey) {
+            Object.keys(panels).forEach(k => {
+                panels[k].style.display = (k === activeKey && panels[k].style.display !== 'block') ? 'block' : 'none';
+            });
+        }
+
+        document.getElementById('wp-toggle-payout-btn').addEventListener('click', () => togglePanel('payout'));
+        document.getElementById('wp-toggle-dates-btn').addEventListener('click', () => togglePanel('dates'));
+        document.getElementById('wp-toggle-settings-btn').addEventListener('click', () => togglePanel('settings'));
+
+        document.getElementById('wp-save-key-btn').addEventListener('click', () => {
+            const val = document.getElementById('wp-api-input').value.trim();
+            GM_setValue('wp_torn_api_key', val);
+            const status = document.getElementById('wp-key-status');
+            status.style.color = '#4caf50';
+            status.innerText = '✅ API Key saved!';
+            setTimeout(() => { status.innerText = ''; panels.settings.style.display = 'none'; }, 1200);
+        });
+
+        document.getElementById('wp-recalc-btn').addEventListener('click', () => {
+            GM_setValue('wp_pool', document.getElementById('wp-pool').value);
+            GM_setValue('wp_war_hit', document.getElementById('wp-war-hit').value);
+            GM_setValue('wp_chain_hit', document.getElementById('wp-chain-hit').value);
+            GM_setValue('wp_non_war_hit', document.getElementById('wp-non-war-hit').value);
+            GM_setValue('wp_retal', document.getElementById('wp-retal').value);
+            GM_setValue('wp_assist', document.getElementById('wp-assist').value);
+            GM_setValue('wp_respect_rate', document.getElementById('wp-respect-rate').value);
+            GM_setValue('wp_split_remainder', document.getElementById('wp-split-remainder').checked);
+
+            panels.payout.style.display = 'none';
+            if (Object.keys(compiledMemberStats).length > 0) {
+                renderPayslips();
+            }
+        });
+
+        document.getElementById('wp-run-btn').addEventListener('click', () => {
+            const apiKey = GM_getValue('wp_torn_api_key', '');
+            if (!apiKey) {
+                alert('Please save your Torn API key first.');
+                togglePanel('settings');
+                return;
+            }
+            startAttackScan(apiKey);
+        });
+
+        document.getElementById('wp-export-btn').addEventListener('click', exportPayslipsCSV);
+    }
+
+    function startAttackScan(apiKey) {
+        const resultsEl = document.getElementById('wp-results');
+        document.getElementById('wp-export-btn').style.display = 'none';
+
+        const now = Math.floor(Date.now() / 1000);
+        const startVal = document.getElementById('wp-start-date').value;
+        const endVal = document.getElementById('wp-end-date').value;
+
+        const targetStartTime = startVal ? Math.floor(new Date(startVal).getTime() / 1000) : (now - (4 * 24 * 60 * 60));
+        let scanToTime = endVal ? Math.floor(new Date(endVal).getTime() / 1000) : now;
+        if (scanToTime > now) scanToTime = now;
+
+        resultsEl.innerHTML = `<p style="color:#ffca28;">Fetching faction roster...</p>`;
+
+        // Step 1: Fetch faction basic info to map attacker IDs/names accurately
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: `https://api.torn.com/faction/?selections=basic&key=${apiKey}`,
+            onload: function(res) {
+                try {
+                    const data = JSON.parse(res.responseText);
+                    if (data.error) {
+                        resultsEl.innerHTML = `<p style="color:#f44336;">API Error: ${data.error.error}</p>`;
+                        return;
+                    }
+                    currentFactionMembers = data.members || {};
+                    paginateAttacks(apiKey, targetStartTime, scanToTime);
+                } catch (e) {
+                    resultsEl.innerHTML = `<p style="color:#f44336;">Failed to parse faction roster.</p>`;
+                }
+            },
+            onerror: () => { resultsEl.innerHTML = `<p style="color:#f44336;">Network error fetching roster.</p>`; }
+        });
+    }
+
+    function paginateAttacks(apiKey, targetStartTime, initialToTime) {
+        const resultsEl = document.getElementById('wp-results');
+        let allAttacks = {};
+        let chunk = 0;
+        let currentTo = initialToTime;
+
+        function fetchNextChunk() {
+            chunk++;
+            resultsEl.innerHTML = `<p style="color:#ffca28;">Scanning attack logs (Batch ${chunk}/${MAX_CHUNKS})... Reached ${new Date(currentTo * 1000).toLocaleString()}</p>`;
+
+            const url = `https://api.torn.com/faction/?selections=attacks&to=${currentTo}&key=${apiKey}`;
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: url,
+                onload: function(res) {
+                    try {
+                        const data = JSON.parse(res.responseText);
+                        if (data.error) {
+                            resultsEl.innerHTML = `<p style="color:#f44336;">API Error: ${data.error.error}</p>`;
+                            return;
+                        }
+
+                        const batch = data.attacks || {};
+                        const ids = Object.keys(batch);
+
+                        if (ids.length === 0) {
+                            compileAttackData(allAttacks, targetStartTime, initialToTime);
+                            return;
+                        }
+
+                        Object.assign(allAttacks, batch);
+
+                        let oldestInBatch = currentTo;
+                        ids.forEach(id => {
+                            const ts = batch[id].timestamp_ended || batch[id].timestamp_started || batch[id].timestamp;
+                            if (ts < oldestInBatch) oldestInBatch = ts;
+                        });
+
+                        if (oldestInBatch <= targetStartTime || oldestInBatch === currentTo || chunk >= MAX_CHUNKS) {
+                            compileAttackData(allAttacks, targetStartTime, initialToTime);
+                        } else {
+                            currentTo = oldestInBatch - 1;
+                            setTimeout(fetchNextChunk, 250);
+                        }
+                    } catch (e) {
+                        resultsEl.innerHTML = `<p style="color:#f44336;">Error parsing attack batch.</p>`;
+                    }
+                },
+                onerror: () => { resultsEl.innerHTML = `<p style="color:#f44336;">Network error during attack pagination.</p>`; }
+            });
+        }
+
+        fetchNextChunk();
+    }
+
+    function compileAttackData(attacks, startTime, endTime) {
+        const stats = {};
+        const validOutcomes = ["Hospitalized", "Mugged", "Left", "Arrested", "Special"];
+
+        // Initialize all active faction members so 0-hit members are visible if desired (filtered later if 0)
+        Object.entries(currentFactionMembers).forEach(([id, info]) => {
+            stats[info.name] = {
+                id: id,
+                name: info.name,
+                warHits: 0,
+                chainHits: 0,
+                nonWarHits: 0,
+                retals: 0,
+                assists: 0,
+                respect: 0
+            };
+        });
+
+        Object.values(attacks).forEach(atk => {
+            const ts = atk.timestamp_ended || atk.timestamp_started || atk.timestamp;
+            if (ts < startTime || ts > endTime) return;
+
+            // Ensure attacker belongs to our faction
+            const attackerId = String(atk.attacker_id || '');
+            const isOurMember = currentFactionMembers[attackerId] || (atk.attacker_name && stats[atk.attacker_name]);
+            if (!isOurMember) return;
+
+            const name = currentFactionMembers[attackerId] ? currentFactionMembers[attackerId].name : atk.attacker_name;
+            if (!stats[name]) {
+                stats[name] = { id: attackerId, name: name, warHits: 0, chainHits: 0, nonWarHits: 0, retals: 0, assists: 0, respect: 0 };
+            }
+
+            // 1. Check Assists (Assists don't count as finishing hits)
+            if (atk.result === "Assist" || atk.modifiers?.assist > 1) {
+                stats[name].assists++;
+                return;
+            }
+
+            // Must be a winning hit for hit categories
+            if (!validOutcomes.includes(atk.result)) return;
+
+            const respectGain = parseFloat(atk.respect_gain || atk.respect || 0);
+            stats[name].respect += respectGain;
+
+            // 2. Check Retaliation
+            const isRetal = (atk.modifiers && parseFloat(atk.modifiers.retaliation) > 1) || atk.retaliation === 1;
+            if (isRetal) {
+                stats[name].retals++;
+            }
+
+            // 3. Classify Hit Type: War Hit vs Chain Hit vs Non-War Outside Hit
+            const isWar = (atk.ranked_war === 1) || (atk.modifiers && parseFloat(atk.modifiers.war) > 1);
+            const isChain = (atk.chain && atk.chain > 0) || (atk.modifiers && parseFloat(atk.modifiers.chain) > 1);
+
+            if (isWar) {
+                stats[name].warHits++;
+            } else if (isChain) {
+                stats[name].chainHits++;
+            } else {
+                stats[name].nonWarHits++;
+            }
+        });
+
+        compiledMemberStats = stats;
+        renderPayslips();
+    }
+
+    function formatMoney(num) {
+        return '$' + Math.round(num).toLocaleString();
+    }
+
+    function renderPayslips() {
+        const resultsEl = document.getElementById('wp-results');
+        const exportBtn = document.getElementById('wp-export-btn');
+
+        const pool = parseFloat(GM_getValue('wp_pool', '1000000000')) || 0;
+        const rateWar = parseFloat(GM_getValue('wp_war_hit', '1000000')) || 0;
+        const rateChain = parseFloat(GM_getValue('wp_chain_hit', '120000')) || 0;
+        const rateNonWar = parseFloat(GM_getValue('wp_non_war_hit', '0')) || 0;
+        const rateRetal = parseFloat(GM_getValue('wp_retal', '10000')) || 0;
+        const rateAssist = parseFloat(GM_getValue('wp_assist', '25000')) || 0;
+        const rateRespect = parseFloat(GM_getValue('wp_respect_rate', '0')) || 0;
+        const splitRemainder = GM_getValue('wp_split_remainder', true);
+
+        let totalFactionRespect = 0;
+        let totalBasePay = 0;
+
+        const activeMembers = Object.values(compiledMemberStats).filter(m => 
+            m.warHits > 0 || m.chainHits > 0 || m.nonWarHits > 0 || m.retals > 0 || m.assists > 0
+        );
+
+        if (activeMembers.length === 0) {
+            resultsEl.innerHTML = `<p style="color:#aaa;">No qualifying faction hits found in the selected time window.</p>`;
+            exportBtn.style.display = 'none';
+            return;
+        }
+
+        exportBtn.style.display = 'inline-block';
+
+        activeMembers.forEach(m => {
+            totalFactionRespect += m.respect;
+            m.basePay = (m.warHits * rateWar) +
+                        (m.chainHits * rateChain) +
+                        (m.nonWarHits * rateNonWar) +
+                        (m.retals * rateRetal) +
+                        (m.assists * rateAssist) +
+                        (m.respect * rateRespect);
+            totalBasePay += m.basePay;
+        });
+
+        const remainderPool = Math.max(0, pool - totalBasePay);
+        const perRespectBonus = (splitRemainder && totalFactionRespect > 0 && remainderPool > 0) 
+            ? (remainderPool / totalFactionRespect) 
+            : 0;
+
+        activeMembers.forEach(m => {
+            m.respectBonus = m.respect * perRespectBonus;
+            m.finalPay = m.basePay + m.respectBonus;
+        });
+
+        activeMembers.sort((a, b) => b.finalPay - a.finalPay);
+
+        const totalDistributed = activeMembers.reduce((sum, m) => sum + m.finalPay, 0);
+
+        let html = `
+            <div class="wp-summary-bar">
+                <div><strong>Reward Pool:</strong> ${formatMoney(pool)}</div>
+                <div><strong>Direct Hit/Bonus Pay:</strong> ${formatMoney(totalBasePay)}</div>
+                <div><strong>Respect Pool Split:</strong> ${formatMoney(splitRemainder ? remainderPool : 0)} (${formatMoney(perRespectBonus)}/resp)</div>
+                <div style="color:#4caf50;"><strong>Total Payout:</strong> ${formatMoney(totalDistributed)}</div>
+            </div>
+            <table class="war-payout-table">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;">Member</th>
+                        <th>War Hits</th>
+                        <th>Chain Hits</th>
+                        <th>Non-War</th>
+                        <th>Retals</th>
+                        <th>Assists</th>
+                        <th>Respect</th>
+                        <th style="color:#ffca28;">Total Paycheck</th>
+                        <th style="text-align:left;">Payslip Calculation Breakdown</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        activeMembers.forEach(m => {
+            const parts = [];
+            if (m.warHits > 0 && rateWar > 0) parts.push(`${m.warHits} War (${formatMoney(m.warHits * rateWar)})`);
+            if (m.chainHits > 0 && rateChain > 0) parts.push(`${m.chainHits} Chain (${formatMoney(m.chainHits * rateChain)})`);
+            if (m.nonWarHits > 0 && rateNonWar > 0) parts.push(`${m.nonWarHits} Outside (${formatMoney(m.nonWarHits * rateNonWar)})`);
+            if (m.retals > 0 && rateRetal > 0) parts.push(`${m.retals} Retal (${formatMoney(m.retals * rateRetal)})`);
+            if (m.assists > 0 && rateAssist > 0) parts.push(`${m.assists} Assist (${formatMoney(m.assists * rateAssist)})`);
+            if (m.respect > 0 && rateRespect > 0) parts.push(`${m.respect.toFixed(1)} Resp (${formatMoney(m.respect * rateRespect)})`);
+            if (m.respectBonus > 0) parts.push(`Pool Share (${formatMoney(m.respectBonus)})`);
+
+            const explanation = parts.length > 0 ? parts.join(' + ') : 'No payable actions';
+
+            html += `
+                <tr>
+                    <td><strong>${m.name}</strong></td>
+                    <td>${m.warHits}</td>
+                    <td>${m.chainHits}</td>
+                    <td>${m.nonWarHits}</td>
+                    <td>${m.retals}</td>
+                    <td>${m.assists}</td>
+                    <td>${m.respect.toFixed(2)}</td>
+                    <td style="color:#4caf50 !important; font-weight:bold;">${formatMoney(m.finalPay)}</td>
+                    <td style="font-size:11px; color:#ccc !important;">${explanation}</td>
+                </tr>
+            `;
+        });
+
+        html += `</tbody></table>`;
+        resultsEl.innerHTML = html;
+    }
+
+    function exportPayslipsCSV() {
+        const activeMembers = Object.values(compiledMemberStats).filter(m => m.finalPay !== undefined);
+        if (activeMembers.length === 0) return;
+
+        let csv = "Member,War Hits,Chain Hits,Non-War Hits,Retals,Assists,Respect Gained,Base Pay,Respect Bonus,Total Paycheck\n";
+        activeMembers.sort((a, b) => b.finalPay - a.finalPay).forEach(m => {
+            csv += `"${m.name}",${m.warHits},${m.chainHits},${m.nonWarHits},${m.retals},${m.assists},${m.respect.toFixed(2)},${Math.round(m.basePay)},${Math.round(m.respectBonus)},${Math.round(m.finalPay)}\n`;
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `War_Payslips_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    const observer = new MutationObserver(() => injectDashboard());
+    observer.observe(document.body, { childList: true, subtree: true });
+    injectDashboard();
+})();
