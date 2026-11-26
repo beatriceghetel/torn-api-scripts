@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.1.0
+// @version      1.2.0
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -25,6 +25,7 @@
         .mct-title { color: #e7c66a; font-size: 15px; font-weight: 700; }
         .mct-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
         .mct-control, .mct-button { min-height: 30px; padding: 6px 9px; color: #f2f2f2; background: #171a18; border: 1px solid #566057; border-radius: 3px; font-size: 12px; }
+        .mct-date { width: 145px; color-scheme: dark; }
         .mct-button { cursor: pointer; background: #536c46; border-color: #718b63; font-weight: 700; }
         .mct-button:hover { background: #648253; }
         .mct-settings { display: none; margin-bottom: 10px; padding: 10px; background: #191c1a; border: 1px solid #3b433d; }
@@ -90,6 +91,28 @@
         return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
     }
 
+    function getDateRangeTimestamps(startDate, endDate) {
+        const toLocalMidnight = (dateValue, dayOffset = 0) => {
+            if (!dateValue) return null;
+            const [year, month, day] = dateValue.split('-').map(Number);
+            return new Date(year, month - 1, day + dayOffset).getTime();
+        };
+        const from = startDate ? Math.floor(toLocalMidnight(startDate) / 1000) : null;
+        const to = endDate ? Math.floor(toLocalMidnight(endDate, 1) / 1000) - 1 : null;
+        return { from, to };
+    }
+
+    function getAttackTimestamp(attack) {
+        return Number(attack.started ?? attack.timestamp_started ?? attack.ended ?? attack.timestamp_ended ?? attack.timestamp);
+    }
+
+    function buildAttacksPath(from, to) {
+        const params = new URLSearchParams({ limit: '100' });
+        if (from !== null) params.set('from', String(from));
+        if (to !== null) params.set('to', String(to));
+        return `/v2/user/attacks?${params.toString()}`;
+    }
+
     function getUser(value) {
         if (!value || typeof value !== 'object') return escapeHTML(value || 'Unknown');
         const name = value.name || 'Unknown';
@@ -111,10 +134,15 @@
         return code ? `https://www.torn.com/page.php?sid=attackLog&ID=${encodeURIComponent(code)}` : '';
     }
 
-    function getFilteredAttacks(attacks, selectedFaction) {
-        return selectedFaction
-            ? attacks.filter(attack => getTargetFaction(attack)?.id === selectedFaction)
-            : attacks;
+    function getFilteredAttacks(attacks, selectedFaction, dateRange = {}) {
+        return attacks.filter(attack => {
+            const timestamp = getAttackTimestamp(attack);
+            if (!Number.isFinite(timestamp)) return false;
+            const inDateRange = (dateRange.from === null || dateRange.from === undefined || timestamp >= dateRange.from) &&
+                (dateRange.to === null || dateRange.to === undefined || timestamp <= dateRange.to);
+            const inFaction = !selectedFaction || getTargetFaction(attack)?.id === selectedFaction;
+            return inDateRange && inFaction;
+        });
     }
 
     function getPriceTags() {
@@ -130,10 +158,10 @@
         return { id: String(id ?? name), name: name || `Faction ${id}` };
     }
 
-    function renderAttacks(attacks, selectedFaction = '') {
+    function renderAttacks(attacks, selectedFaction = '', dateRange = {}) {
         if (!attacks.length) return '<p class="mct-empty">No attack records were returned.</p>';
 
-        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction);
+        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction, dateRange);
         if (!filteredAttacks.length) return '<p class="mct-empty">No attacks match this target faction.</p>';
 
         const priceTags = getPriceTags();
@@ -162,8 +190,8 @@
         </table></div>`;
     }
 
-    function exportFilteredAttacks(attacks, selectedFaction, results) {
-        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction);
+    function exportFilteredAttacks(attacks, selectedFaction, dateRange, results) {
+        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction, dateRange);
         const priceTags = getPriceTags();
         results.querySelectorAll('.mct-price-input').forEach(input => {
             priceTags[input.dataset.attackCode] = input.value.trim();
@@ -225,6 +253,8 @@
                         <option value="bounties">Last bounties placed</option>
                         <option value="attacks">Recent attacks</option>
                     </select>
+                    <input id="mct-start-date" class="mct-control mct-date" type="date" aria-label="Start date" title="Start date" style="display:none;">
+                    <input id="mct-end-date" class="mct-control mct-date" type="date" aria-label="End date" title="End date" style="display:none;">
                     <select id="mct-faction-filter" class="mct-control" aria-label="Filter by target faction" style="display:none;">
                         <option value="">All target factions</option>
                     </select>
@@ -247,19 +277,30 @@
 
         const keyInput = dashboard.querySelector('#mct-api-key');
         const modeSelect = dashboard.querySelector('#mct-mode');
+        const startDateInput = dashboard.querySelector('#mct-start-date');
+        const endDateInput = dashboard.querySelector('#mct-end-date');
         const factionFilter = dashboard.querySelector('#mct-faction-filter');
         const exportButton = dashboard.querySelector('#mct-export');
         const results = dashboard.querySelector('#mct-results');
         let loadedAttacks = [];
         keyInput.value = GM_getValue('mct_api_key', '');
+        startDateInput.value = GM_getValue('mct_attack_start_date', '');
+        endDateInput.value = GM_getValue('mct_attack_end_date', '');
 
         modeSelect.addEventListener('change', () => {
             const showAttackControls = modeSelect.value === 'attacks' && loadedAttacks.length > 0;
+            startDateInput.style.display = modeSelect.value === 'attacks' ? '' : 'none';
+            endDateInput.style.display = modeSelect.value === 'attacks' ? '' : 'none';
             factionFilter.style.display = showAttackControls ? '' : 'none';
             exportButton.style.display = showAttackControls ? '' : 'none';
         });
+        [startDateInput, endDateInput].forEach(input => input.addEventListener('change', () => {
+            GM_setValue('mct_attack_start_date', startDateInput.value);
+            GM_setValue('mct_attack_end_date', endDateInput.value);
+        }));
         factionFilter.addEventListener('change', () => {
-            results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
+            const dateRange = getDateRangeTimestamps(startDateInput.value, endDateInput.value);
+            results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value, dateRange);
             dashboard.querySelector('#mct-status').textContent = `Showing ${dashboard.querySelectorAll('#mct-results tbody tr').length} record(s).`;
         });
         results.addEventListener('change', event => {
@@ -270,7 +311,8 @@
             GM_setValue('mct_attack_price_tags', priceTags);
         });
         exportButton.addEventListener('click', () => {
-            exportFilteredAttacks(loadedAttacks, factionFilter.value, results);
+            const dateRange = getDateRangeTimestamps(startDateInput.value, endDateInput.value);
+            exportFilteredAttacks(loadedAttacks, factionFilter.value, dateRange, results);
         });
 
         dashboard.querySelector('#mct-settings-toggle').addEventListener('click', () => {
@@ -294,12 +336,20 @@
             }
 
             const mode = dashboard.querySelector('#mct-mode').value;
+            const dateRange = getDateRangeTimestamps(startDateInput.value, endDateInput.value);
+            if (mode === 'attacks' && dateRange.from !== null && dateRange.to !== null && dateRange.from > dateRange.to) {
+                status.textContent = 'Start date must be on or before the end date.';
+                status.className = 'mct-status error';
+                return;
+            }
+            GM_setValue('mct_attack_start_date', startDateInput.value);
+            GM_setValue('mct_attack_end_date', endDateInput.value);
             status.className = 'mct-status';
             status.textContent = 'Loading latest records...';
             results.innerHTML = '';
             try {
                 const payload = mode === 'attacks'
-                    ? await apiGet('/v2/user/attacks?limit=100')
+                    ? await apiGet(buildAttacksPath(dateRange.from, dateRange.to))
                     : await apiGet('/v2/user/log?cat=bounties&limit=100');
                 if (mode === 'attacks') {
                     loadedAttacks = asList(payload.attacks || payload.attack || payload);
@@ -313,8 +363,10 @@
                             .map(([id, name]) => `<option value="${escapeHTML(id)}">${escapeHTML(name)}</option>`).join('');
                     factionFilter.style.display = '';
                     exportButton.style.display = '';
-                    results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
+                    results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value, dateRange);
                 } else {
+                    startDateInput.style.display = 'none';
+                    endDateInput.style.display = 'none';
                     factionFilter.style.display = 'none';
                     factionFilter.innerHTML = '<option value="">All target factions</option>';
                     exportButton.style.display = 'none';
