@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.2.0
+// @version      1.3.0
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -198,19 +198,18 @@
         });
         GM_setValue('mct_attack_price_tags', priceTags);
 
-        const csvEscape = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
-        const csvRows = [
-            ['Number', 'Attacker', 'URL', 'Price tag'],
-            ...filteredAttacks.map((attack, index) => {
-                const code = getAttackCode(attack);
-                return [index + 1, getUserName(attack.attacker), getAttackReportUrl(attack), priceTags[code] || ''];
-            })
-        ];
-        const csv = csvRows.map(row => row.map(csvEscape).join(',')).join('\r\n');
-        const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }));
+        const report = filteredAttacks.map((attack, index) => {
+            const code = getAttackCode(attack);
+            const reportUrl = getAttackReportUrl(attack);
+            const attacker = String(getUserName(attack.attacker)).replace(/[\r\n]+/g, ' ').replace(/([\\[\]])/g, '\\$1');
+            const priceTag = String(priceTags[code] || '').replace(/[\r\n]+/g, ' ').trim();
+            const reportLink = reportUrl ? `[${reportUrl}](${reportUrl})` : '[Attack report unavailable]';
+            return `[${index + 1}] ${reportLink} ${attacker}${priceTag ? ` ${priceTag}` : ''}`;
+        }).join('\n');
+        const url = URL.createObjectURL(new Blob([report], { type: 'text/markdown;charset=utf-8;' }));
         const link = document.createElement('a');
         link.href = url;
-        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.md`;
         document.body.appendChild(link);
         link.click();
         link.remove();
