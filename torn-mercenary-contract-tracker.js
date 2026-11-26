@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.3.2
+// @version      1.3.3
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -190,7 +190,7 @@
         </table></div>`;
     }
 
-    function exportFilteredAttacks(attacks, selectedFaction, dateRange, results) {
+    async function exportFilteredAttacks(attacks, selectedFaction, dateRange, results) {
         const filteredAttacks = getFilteredAttacks(attacks, selectedFaction, dateRange)
             .sort((first, second) => getAttackTimestamp(first) - getAttackTimestamp(second));
         const priceTags = getPriceTags();
@@ -206,14 +206,28 @@
             const priceTag = String(priceTags[code] || '').replace(/[\r\n]+/g, ' ').trim();
             return `[${index + 1}] ${reportUrl || 'Attack report unavailable'} ${attacker}${priceTag ? ` ${priceTag}` : ''}`;
         }).join('\n');
-        const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8;' }));
+        const fileName = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.txt`;
+        const reportBlob = new Blob([report], { type: 'text/plain;charset=utf-8;' });
+        if (typeof File !== 'undefined' && navigator.share && navigator.canShare) {
+            const file = new File([reportBlob], fileName, { type: 'text/plain' });
+            try {
+                if (navigator.canShare({ files: [file] })) {
+                    await navigator.share({ files: [file], title: 'Mercenary contract report' });
+                    return;
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+            }
+        }
+
+        const url = URL.createObjectURL(reportBlob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.txt`;
+        link.download = fileName;
         document.body.appendChild(link);
         link.click();
         link.remove();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
 
     function renderBounties(payload) {
