@@ -191,7 +191,8 @@
     }
 
     function exportFilteredAttacks(attacks, selectedFaction, dateRange, results) {
-        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction, dateRange);
+        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction, dateRange)
+            .sort((first, second) => getAttackTimestamp(first) - getAttackTimestamp(second));
         const priceTags = getPriceTags();
         results.querySelectorAll('.mct-price-input').forEach(input => {
             priceTags[input.dataset.attackCode] = input.value.trim();
