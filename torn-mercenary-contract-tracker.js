@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.0.1
+// @version      1.1.0
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -39,6 +39,7 @@
         .mct-table td, .mct-table td a.mct-player-link { color: #f2f2f2 !important; }
         .mct-table tbody tr:nth-child(even) { background: #292e2a; }
         .mct-table a { color: #e7c66a; }
+        .mct-price-input { width: 100%; min-width: 90px; min-height: 32px; padding: 6px; color: #f2f2f2; background: #171a18; border: 1px solid #566057; border-radius: 3px; }
         .mct-empty { color: #b7c0b9; }
         @media (max-width: 600px) { #${widgetId} { padding: 9px; } .mct-controls { width: 100%; } }
     `;
@@ -97,6 +98,29 @@
         return `<a class="mct-player-link" href="https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}" target="_blank" rel="noopener">${escapeHTML(name)} [${escapeHTML(id)}]</a>`;
     }
 
+    function getUserName(value) {
+        return typeof value === 'object' && value ? value.name || 'Unknown' : value || 'Unknown';
+    }
+
+    function getAttackCode(attack) {
+        return String(attack.code || attack.attack_code || '');
+    }
+
+    function getAttackReportUrl(attack) {
+        const code = getAttackCode(attack);
+        return code ? `https://www.torn.com/page.php?sid=attackLog&ID=${encodeURIComponent(code)}` : '';
+    }
+
+    function getFilteredAttacks(attacks, selectedFaction) {
+        return selectedFaction
+            ? attacks.filter(attack => getTargetFaction(attack)?.id === selectedFaction)
+            : attacks;
+    }
+
+    function getPriceTags() {
+        return GM_getValue('mct_attack_price_tags', {});
+    }
+
     function getTargetFaction(attack) {
         const defender = attack.defender || {};
         const faction = defender.faction || attack.defender_faction || attack.defenderFaction || {};
@@ -109,15 +133,15 @@
     function renderAttacks(attacks, selectedFaction = '') {
         if (!attacks.length) return '<p class="mct-empty">No attack records were returned.</p>';
 
-        const filteredAttacks = selectedFaction
-            ? attacks.filter(attack => getTargetFaction(attack)?.id === selectedFaction)
-            : attacks;
+        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction);
         if (!filteredAttacks.length) return '<p class="mct-empty">No attacks match this target faction.</p>';
 
+        const priceTags = getPriceTags();
         const rows = filteredAttacks.map(attack => {
-            const attackCode = attack.code || attack.attack_code;
-            const report = attackCode
-                ? `<a href="https://www.torn.com/page.php?sid=attackLog&ID=${encodeURIComponent(attackCode)}" target="_blank" rel="noopener">Open report</a>`
+            const attackCode = getAttackCode(attack);
+            const reportUrl = getAttackReportUrl(attack);
+            const report = reportUrl
+                ? `<a href="${escapeHTML(reportUrl)}" target="_blank" rel="noopener">Open report</a>`
                 : 'Unavailable';
             const sides = `${getUser(attack.attacker)} &rarr; ${getUser(attack.defender)}`;
             const result = attack.result || attack.res || 'Unknown';
@@ -128,13 +152,41 @@
                 <td>${escapeHTML(result)}</td>
                 <td>${escapeHTML(respect)}</td>
                 <td>${report}</td>
+                <td><input class="mct-price-input" type="text" maxlength="40" data-attack-code="${escapeHTML(attackCode)}" value="${escapeHTML(priceTags[attackCode] || '')}" placeholder="e.g. 550k" aria-label="Price tag"></td>
             </tr>`;
         }).join('');
 
         return `<div class="mct-table-wrap"><table class="mct-table">
-            <thead><tr><th>Date</th><th>Attacker &rarr; Defender</th><th>Result</th><th>Respect</th><th>Attack report</th></tr></thead>
+            <thead><tr><th>Date</th><th>Attacker &rarr; Defender</th><th>Result</th><th>Respect</th><th>Attack report</th><th>Price tag</th></tr></thead>
             <tbody>${rows}</tbody>
         </table></div>`;
+    }
+
+    function exportFilteredAttacks(attacks, selectedFaction, results) {
+        const filteredAttacks = getFilteredAttacks(attacks, selectedFaction);
+        const priceTags = getPriceTags();
+        results.querySelectorAll('.mct-price-input').forEach(input => {
+            priceTags[input.dataset.attackCode] = input.value.trim();
+        });
+        GM_setValue('mct_attack_price_tags', priceTags);
+
+        const csvEscape = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+        const csvRows = [
+            ['Number', 'Attacker', 'URL', 'Price tag'],
+            ...filteredAttacks.map((attack, index) => {
+                const code = getAttackCode(attack);
+                return [index + 1, getUserName(attack.attacker), getAttackReportUrl(attack), priceTags[code] || ''];
+            })
+        ];
+        const csv = csvRows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+        const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
     }
 
     function renderBounties(payload) {
@@ -176,6 +228,7 @@
                     <select id="mct-faction-filter" class="mct-control" aria-label="Filter by target faction" style="display:none;">
                         <option value="">All target factions</option>
                     </select>
+                    <button id="mct-export" class="mct-control" type="button" style="display:none;">Export filtered</button>
                     <button id="mct-fetch" class="mct-button" type="button">Load activity</button>
                     <button id="mct-settings-toggle" class="mct-control" type="button">API key</button>
                 </div>
@@ -195,15 +248,29 @@
         const keyInput = dashboard.querySelector('#mct-api-key');
         const modeSelect = dashboard.querySelector('#mct-mode');
         const factionFilter = dashboard.querySelector('#mct-faction-filter');
+        const exportButton = dashboard.querySelector('#mct-export');
+        const results = dashboard.querySelector('#mct-results');
         let loadedAttacks = [];
         keyInput.value = GM_getValue('mct_api_key', '');
 
         modeSelect.addEventListener('change', () => {
-            factionFilter.style.display = modeSelect.value === 'attacks' ? '' : 'none';
+            const showAttackControls = modeSelect.value === 'attacks' && loadedAttacks.length > 0;
+            factionFilter.style.display = showAttackControls ? '' : 'none';
+            exportButton.style.display = showAttackControls ? '' : 'none';
         });
         factionFilter.addEventListener('change', () => {
-            dashboard.querySelector('#mct-results').innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
+            results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
             dashboard.querySelector('#mct-status').textContent = `Showing ${dashboard.querySelectorAll('#mct-results tbody tr').length} record(s).`;
+        });
+        results.addEventListener('change', event => {
+            const input = event.target.closest('.mct-price-input');
+            if (!input) return;
+            const priceTags = getPriceTags();
+            priceTags[input.dataset.attackCode] = input.value.trim();
+            GM_setValue('mct_attack_price_tags', priceTags);
+        });
+        exportButton.addEventListener('click', () => {
+            exportFilteredAttacks(loadedAttacks, factionFilter.value, results);
         });
 
         dashboard.querySelector('#mct-settings-toggle').addEventListener('click', () => {
@@ -245,10 +312,12 @@
                         [...factions.entries()].sort((a, b) => a[1].localeCompare(b[1]))
                             .map(([id, name]) => `<option value="${escapeHTML(id)}">${escapeHTML(name)}</option>`).join('');
                     factionFilter.style.display = '';
+                    exportButton.style.display = '';
                     results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
                 } else {
                     factionFilter.style.display = 'none';
                     factionFilter.innerHTML = '<option value="">All target factions</option>';
+                    exportButton.style.display = 'none';
                     loadedAttacks = [];
                     results.innerHTML = renderBounties(payload);
                 }
