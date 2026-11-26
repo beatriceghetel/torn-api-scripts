@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -36,6 +36,7 @@
         .mct-table { width: 100%; min-width: 720px; border-collapse: collapse; }
         .mct-table th, .mct-table td { padding: 7px 8px; border: 1px solid #404741; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
         .mct-table th { color: #c6cec8; background: #303632; font-size: 11px; }
+        .mct-table td, .mct-table td a.mct-player-link { color: #f2f2f2 !important; }
         .mct-table tbody tr:nth-child(even) { background: #292e2a; }
         .mct-table a { color: #e7c66a; }
         .mct-empty { color: #b7c0b9; }
@@ -93,17 +94,30 @@
         const name = value.name || 'Unknown';
         const id = value.id;
         if (!id) return escapeHTML(name);
-        return `<a href="https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}" target="_blank" rel="noopener">${escapeHTML(name)} [${escapeHTML(id)}]</a>`;
+        return `<a class="mct-player-link" href="https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}" target="_blank" rel="noopener">${escapeHTML(name)} [${escapeHTML(id)}]</a>`;
     }
 
-    function renderAttacks(payload) {
-        const attacks = asList(payload.attacks || payload.attack || payload);
+    function getTargetFaction(attack) {
+        const defender = attack.defender || {};
+        const faction = defender.faction || attack.defender_faction || attack.defenderFaction || {};
+        const id = (typeof faction === 'object' ? faction.id ?? faction.faction_id : faction) ?? defender.faction_id ?? attack.defender_faction_id;
+        const name = (typeof faction === 'object' ? faction.name : '') || defender.faction_name || attack.defender_faction_name;
+        if (id === undefined && !name) return null;
+        return { id: String(id ?? name), name: name || `Faction ${id}` };
+    }
+
+    function renderAttacks(attacks, selectedFaction = '') {
         if (!attacks.length) return '<p class="mct-empty">No attack records were returned.</p>';
 
-        const rows = attacks.map(attack => {
-            const attackId = attack.id || attack.code;
-            const report = attackId
-                ? `<a href="https://www.torn.com/loader.php?sid=attackLog&ID=${encodeURIComponent(attackId)}" target="_blank" rel="noopener">Open report</a>`
+        const filteredAttacks = selectedFaction
+            ? attacks.filter(attack => getTargetFaction(attack)?.id === selectedFaction)
+            : attacks;
+        if (!filteredAttacks.length) return '<p class="mct-empty">No attacks match this target faction.</p>';
+
+        const rows = filteredAttacks.map(attack => {
+            const attackCode = attack.code || attack.attack_code;
+            const report = attackCode
+                ? `<a href="https://www.torn.com/page.php?sid=attackLog&ID=${encodeURIComponent(attackCode)}" target="_blank" rel="noopener">Open report</a>`
                 : 'Unavailable';
             const sides = `${getUser(attack.attacker)} &rarr; ${getUser(attack.defender)}`;
             const result = attack.result || attack.res || 'Unknown';
@@ -159,6 +173,9 @@
                         <option value="bounties">Last bounties placed</option>
                         <option value="attacks">Recent attacks</option>
                     </select>
+                    <select id="mct-faction-filter" class="mct-control" aria-label="Filter by target faction" style="display:none;">
+                        <option value="">All target factions</option>
+                    </select>
                     <button id="mct-fetch" class="mct-button" type="button">Load activity</button>
                     <button id="mct-settings-toggle" class="mct-control" type="button">API key</button>
                 </div>
@@ -176,7 +193,18 @@
         target.insertBefore(dashboard, target.firstChild);
 
         const keyInput = dashboard.querySelector('#mct-api-key');
+        const modeSelect = dashboard.querySelector('#mct-mode');
+        const factionFilter = dashboard.querySelector('#mct-faction-filter');
+        let loadedAttacks = [];
         keyInput.value = GM_getValue('mct_api_key', '');
+
+        modeSelect.addEventListener('change', () => {
+            factionFilter.style.display = modeSelect.value === 'attacks' ? '' : 'none';
+        });
+        factionFilter.addEventListener('change', () => {
+            dashboard.querySelector('#mct-results').innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
+            dashboard.querySelector('#mct-status').textContent = `Showing ${dashboard.querySelectorAll('#mct-results tbody tr').length} record(s).`;
+        });
 
         dashboard.querySelector('#mct-settings-toggle').addEventListener('click', () => {
             const panel = dashboard.querySelector('#mct-settings');
@@ -206,7 +234,24 @@
                 const payload = mode === 'attacks'
                     ? await apiGet('/v2/user/attacks?limit=100')
                     : await apiGet('/v2/user/log?cat=bounties&limit=100');
-                results.innerHTML = mode === 'attacks' ? renderAttacks(payload) : renderBounties(payload);
+                if (mode === 'attacks') {
+                    loadedAttacks = asList(payload.attacks || payload.attack || payload);
+                    const factions = new Map();
+                    loadedAttacks.forEach(attack => {
+                        const faction = getTargetFaction(attack);
+                        if (faction) factions.set(faction.id, faction.name);
+                    });
+                    factionFilter.innerHTML = '<option value="">All target factions</option>' +
+                        [...factions.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+                            .map(([id, name]) => `<option value="${escapeHTML(id)}">${escapeHTML(name)}</option>`).join('');
+                    factionFilter.style.display = '';
+                    results.innerHTML = renderAttacks(loadedAttacks, factionFilter.value);
+                } else {
+                    factionFilter.style.display = 'none';
+                    factionFilter.innerHTML = '<option value="">All target factions</option>';
+                    loadedAttacks = [];
+                    results.innerHTML = renderBounties(payload);
+                }
                 status.textContent = `Loaded ${results.querySelectorAll('tbody tr').length} record(s).`;
             } catch (error) {
                 status.textContent = String(error);
