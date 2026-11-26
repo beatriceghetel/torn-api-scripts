@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.3.1
+// @version      1.3.2
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
