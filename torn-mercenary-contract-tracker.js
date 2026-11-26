@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mercenary Contract Tracker
 // @namespace    https://github.com/beatriceghetel/torn-api-scripts
-// @version      1.3.0
+// @version      1.3.1
 // @description  Lists recent attacks and bounty placement events from your Torn account.
 // @author       beatrice
 // @license      MIT
@@ -203,13 +203,12 @@
             const reportUrl = getAttackReportUrl(attack);
             const attacker = String(getUserName(attack.attacker)).replace(/[\r\n]+/g, ' ').replace(/([\\[\]])/g, '\\$1');
             const priceTag = String(priceTags[code] || '').replace(/[\r\n]+/g, ' ').trim();
-            const reportLink = reportUrl ? `[${reportUrl}](${reportUrl})` : '[Attack report unavailable]';
-            return `[${index + 1}] ${reportLink} ${attacker}${priceTag ? ` ${priceTag}` : ''}`;
+            return `[${index + 1}] ${reportUrl || 'Attack report unavailable'} ${attacker}${priceTag ? ` ${priceTag}` : ''}`;
         }).join('\n');
-        const url = URL.createObjectURL(new Blob([report], { type: 'text/markdown;charset=utf-8;' }));
+        const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8;' }));
         const link = document.createElement('a');
         link.href = url;
-        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.md`;
+        link.download = `mercenary-contracts-${new Date().toISOString().slice(0, 10)}.txt`;
         document.body.appendChild(link);
         link.click();
         link.remove();
